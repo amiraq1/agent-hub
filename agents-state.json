@@ -1,14 +1,14 @@
 {
-  "updated_at": "2026-11-19T23:05:00+03:00",
+  "updated_at": "2026-11-20T00:26:45+03:00",
   "agents": [
     {
       "id": "muse",
       "name": "Muse",
       "role": "مساعد شخصي وتنسيق",
       "status": "working",
-      "current_task": "ربط الوكيلين بلوحة نبض الوكلاء",
+      "current_task": "تنسيق لوحة نبض الوكلاء ومراجعة PR #94 و#96",
       "connection": "email",
-      "last_seen": "2026-11-19T20:56:00+03:00"
+      "last_seen": "2026-11-20T00:26:45+03:00"
     },
     {
       "id": "site-agent",
@@ -34,10 +34,10 @@
       "id": "agent-board-link",
       "title": "ربط الوكيلين بلوحة نبض الوكلاء",
       "owner": "muse",
-      "status": "in_progress",
+      "status": "done",
       "link": null,
       "created_by": "muse",
-      "updated_at": "2026-11-19T20:56:00+03:00"
+      "updated_at": "2026-11-20T00:26:45+03:00"
     },
     {
       "id": "perf-opt-phase",
