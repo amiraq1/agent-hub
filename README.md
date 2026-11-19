@@ -2,6 +2,8 @@
 
 **Shared state for Nabd Agents — agent status board**
 
+🌐 **رابط اللوحة الحية (Live Dashboard):** [https://amiraq1.github.io/agent-hub/](https://amiraq1.github.io/agent-hub/)
+
 مركز الحالة المشتركة ولوحة المتابعة لوكلاء **نبض (Nabd Agents)**. يُستخدم المستودع كمصدر حقيقة واحد (Single Source of Truth) لتنسيق العمل ومتابعة الحالات والمهام بين بيئات تشغيل موزعة لا تشترك في نظام ملفات واحد:
 - **Muse:** مساعد شخصي وتنسيق (سحابي).
 - **موقعي (`site-agent`):** وكيل موقع amnabd.com (على Cue).
