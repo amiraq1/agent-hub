@@ -14,6 +14,7 @@ const {
   isValidIsoDate,
   isValidSafeUrl
 } = require('./validate-state.js');
+const { getCoordinationTowerItems } = require('../assets/modules/tower.js');
 
 function createBaseState() {
   return {
@@ -60,78 +61,6 @@ function createBaseState() {
       }
     ]
   };
-}
-
-// Logic replicate matching app.js Coordination Tower implementation
-function getCoordinationTowerItems(tasks, agents) {
-  const activeTasks = tasks.filter(
-    (t) => t.status !== 'done' && t.status !== 'cancelled' && t.state !== 'completed'
-  );
-
-  const items = [];
-
-  for (const task of activeTasks) {
-    if (!task.handoff) continue;
-    const h = task.handoff;
-    const fromAgent = agents.find((a) => a.id === h.from) || { id: h.from, name: h.from };
-    const toAgent = agents.find((a) => a.id === h.to) || { id: h.to, name: h.to };
-
-    let actorId;
-    let actorName;
-    let actorRole;
-    let waitTimestamp;
-    let rank;
-    let returnReason = null;
-
-    if (h.status === 'returned') {
-      rank = 1;
-      actorId = h.from;
-      actorName = fromAgent.name;
-      actorRole = 'المرسل (مطلوب معالجة سبب الإعادة)';
-      waitTimestamp = h.decision?.at || h.at;
-      returnReason = h.decision?.reason || null;
-    } else if (h.status === 'pending') {
-      rank = 2;
-      actorId = h.to;
-      actorName = toAgent.name;
-      actorRole = 'المستلم (مطلوب مراجعة التسليم)';
-      waitTimestamp = h.at;
-    } else if (h.status === 'accepted') {
-      rank = 3;
-      actorId = h.to;
-      actorName = toAgent.name;
-      actorRole = 'المستلم (التسليم مقبول والمهمة جارية)';
-      waitTimestamp = h.decision?.at || h.at;
-    } else {
-      continue;
-    }
-
-    const waitMs = Math.max(0, Date.now() - new Date(waitTimestamp).getTime());
-    const waitMinutes = Math.floor(waitMs / (1000 * 60));
-
-    items.push({
-      task,
-      handoff: h,
-      rank,
-      actorId,
-      actorName,
-      actorRole,
-      nextStep: h.next_step,
-      summary: h.summary,
-      evidenceUrl: isValidSafeUrl(h.evidence_url) ? h.evidence_url : null,
-      waitTimestamp,
-      waitMinutes,
-      returnReason
-    });
-  }
-
-  items.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    // Pending: oldest wait first
-    return b.waitMinutes - a.waitMinutes;
-  });
-
-  return items;
 }
 
 describe('Coordination Tower: Schema & Receipt Validation', () => {
@@ -432,6 +361,34 @@ describe('Coordination Tower: Priority Sorting & Action Allocation Logic', () =>
     const towerItems = getCoordinationTowerItems(tasks, agents);
     assert.equal(towerItems.length, 0);
   });
+
+  test('Case 13: Corrupted or unparseable handoff date sets isCorruptedDate without crashing', () => {
+    const tasks = [
+      {
+        id: 'T-CORRUPT',
+        title: 'مهمة بتاريخ تالف',
+        owner: 'site-agent',
+        status: 'in_progress',
+        handoff: {
+          from: 'site-agent',
+          to: 'muse',
+          at: 'invalid-corrupt-date-string',
+          status: 'pending',
+          summary: 'ملخص',
+          next_step: 'مراجعة'
+        }
+      }
+    ];
+    const towerItems = getCoordinationTowerItems(tasks, agents);
+    assert.equal(towerItems.length, 1);
+    assert.equal(towerItems[0].isCorruptedDate, true);
+    assert.equal(towerItems[0].waitMinutes, 0);
+  });
+
+  test('Case 14: Null or empty tasks array safely returns empty array', () => {
+    assert.deepEqual(getCoordinationTowerItems(null, agents), []);
+    assert.deepEqual(getCoordinationTowerItems([], agents), []);
+  });
 });
 
-console.log('✓ All 12 test suites for Coordination Tower passed successfully!');
+console.log('✓ All 14 test suites for Coordination Tower passed successfully!');
