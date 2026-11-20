@@ -3,13 +3,16 @@
  * Implements Stale-While-Revalidate for state and Cache-First for static assets.
  */
 
-const CACHE_NAME = 'nabd-agents-v1';
+const CACHE_NAME = 'nabd-agents-v2';
 const STATIC_ASSETS = [
   './',
   './index.html',
   './assets/styles.min.css',
   './assets/app.js',
-  './assets/manifest.webmanifest'
+  './assets/manifest.webmanifest',
+  './assets/modules/security.js',
+  './assets/modules/tower.js',
+  './assets/modules/format.js'
 ];
 
 self.addEventListener('install', (event) => {

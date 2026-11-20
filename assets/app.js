@@ -1,11 +1,18 @@
 /**
  * assets/app.js
  * High-Performance Single Page Architecture for Nabd Agents
- * Features: Instant Paint, Stale-While-Revalidate (SWR), Zero-Dependency SVG Charting,
+ * Features: Instant Paint, Stale-While-Revalidate (SWR), Zero-Dependency Native Modules,
  * In-Memory Debounced Search, Keyboard Shortcuts, Tab Visibility Management & PWA.
+ *
+ * Architecture:
+ * - Native ES Modules: security.js, tower.js, format.js
+ * - Single Source of Truth: agents-state.json (with live GitHub SWR fallback)
+ * - Epistemic Honesty: Explicit separation of cache, heartbeats, and available history
  */
 
 import { sanitizeUrl, isValidSafeUrl, escapeHtml, safeLinkHref } from './modules/security.js';
+import { getCoordinationTowerItems } from './modules/tower.js';
+import { formatWaitingDuration, nowTime, minutesSinceIso } from './modules/format.js';
 
 // =========================================================================
 // 1. I18N DICTIONARY (Arabic RTL default + English LTR)
@@ -16,51 +23,63 @@ const I18N = {
     brandSub: 'طبقة التسليم وسجل الحالة غير المتزامن',
     alertsBtn: 'التنبيهات',
     alertsTitle: 'مركز التنبيهات الذكية وسجل التدقيق',
-    footerCopy: 'نبض الوكلاء (Nabd Agents) — المنصة التفاعلية وخطة المنتج المعتمدة | عمار محمد • 2026-11-19',
-    resetDemo: 'إعادة ضبط بيانات التجربة',
+    footerCopy: 'نبض الوكلاء (Nabd Agents) — المنصة التفاعلية ومصدر الحقيقة المشترك | 2026',
+    resetDemo: 'إعادة ضبط البيانات المحلية',
     searchPlaceholder: 'بحث فوري في الوكلاء، المهام، الرسائل... (اضغط / للتركيز)',
-    shortcutsHint: 'اختصارات: [ / ] بحث • [ R ] تحديث • [ 1-6 ] التبويبات • [ Esc ] إغلاق',
+    shortcutsHint: 'اختصارات: [ / ] بحث • [ R ] تحديث • [ 1-4 ] التبويبات • [ Esc ] إغلاق',
     nav: {
       overview: 'نظرة عامة',
       board: 'لوحة الحالة',
       tasks: 'المهام والأدلة',
-      handoffs: 'سجل التسليمات',
-      pipeline: 'بوابة الاستقبال',
-      blueprint: 'الخطة والمالية'
+      handoffs: 'سجل التسليمات'
     },
     states: {
       working: 'يعمل',
-      idle: 'جاهز / خامل',
-      waiting_human: 'ينتظر الإنسان',
+      waiting: 'بانتظار مراجعة',
+      idle: 'خامل / جاهز',
+      offline: 'غير متصل',
+      error: 'خطأ',
+      done: 'مكتمل',
+      waiting_human: 'بانتظار قرار بشري',
       blocked: 'معطّل',
-      unresponsive: 'غير متجاوب'
+      unresponsive: 'منقطع النبض'
+    },
+    taskStates: {
+      todo: 'قيد الانتظار',
+      in_progress: 'قيد التنفيذ',
+      waiting_review: 'بانتظار المراجعة',
+      blocked: 'معطّل',
+      done: 'مكتمل',
+      cancelled: 'ملغي'
     },
     handoffStates: {
-      sent: 'أُرسل (Sent)',
-      received: 'استُلم (Received)',
-      accepted: 'قُبل (Accepted)',
-      completed: 'أُنجز (Completed)'
+      pending: 'معلّق (بانتظار البت)',
+      accepted: 'مقبول (قيد الإنجاز)',
+      returned: 'معاد للتصحيح'
     },
     connTypes: {
-      github: 'ملف GitHub مستقل',
-      email: 'بريد وارد مُهيكل',
-      cli: 'API + CLI (المرحلة 2)'
+      email: 'البريد الإلكتروني',
+      github: 'مستودع GitHub',
+      cli: 'طرفية CLI محلية'
     },
     tower: {
-      title: 'من عليه الخطوة التالية؟',
-      subtitle: 'مركز الإجراءات وتوجيه قرارات التنسيق الفورية',
+      title: 'نبض | برج التنسيق — من عليه الخطوة التالية؟',
+      subtitle: 'ترتيب الأولويات الآني لتسريع بت التسليمات وفك التعثر',
       emptyTitle: 'لا توجد مهام تنتظر إجراءً حالياً — جميع المهام مكتملة أو تسير دون عوائق',
-      emptyDesc: 'لا يوجد أي تسليم معلق أو معاد يتطلب تدخلاً عاجلاً. يمكنك مراقبة نبضات الوكلاء أو الاطلاع على سجل التسليمات.',
-      actionNeeded: 'مهمة تحتاج إجراء',
-      actionsNeeded: 'مهام تحتاج إجراء',
-      allClear: 'الوضع مستقر ومستمر',
-      returnedBadge: 'معادة (مطلوب تصحيح)',
-      pendingBadge: 'معلقة (بانتظار المراجعة)',
-      acceptedBadge: 'مقبولة (العمل جارٍ)',
+      emptyDesc: 'صفر تسليمات معادة أو معلقة تتطلب تدخلاً عاجلاً. يمكنك مراقبة النبضات الحية أو فحص سجل المهام.',
+      noTasksTitle: 'لا توجد مهام مسجلة حالياً في ملف الحالة',
+      noTasksDesc: 'ملف agents-state.json لا يحتوي على أي مهام مسجلة. عند إضافة مهام ستظهر هنا بترتيب الأولوية.',
+      actionNeeded: 'إجراء مطلوب',
+      actionsNeeded: 'إجراءات مطلوبة',
+      allClear: 'الوضع سليم بالكامل',
+      noTasksBadge: 'لا توجد مهام',
+      returnedBadge: 'معاد للتصحيح (أولوية 1)',
+      pendingBadge: 'معلّق للمراجعة (أولوية 2)',
+      acceptedBadge: 'مقبول وجارٍ (أولوية 3)',
       actorLabel: 'صاحب الخطوة التالية',
       nextStepLabel: 'الخطوة التالية المطلوبة',
-      waitingAgeLabel: 'عمر الانتظار',
-      evidenceLabel: 'عرض الدليل والمخرجات',
+      waitingAgeLabel: 'عمر انتظار التسليم',
+      evidenceLabel: 'فحص الدليل المرتبط',
       detailsBtn: 'التفاصيل والتسلسل المتاح'
     }
   },
@@ -69,44 +88,56 @@ const I18N = {
     brandSub: 'Async-First Handoff & State Ledger',
     alertsBtn: 'Alerts',
     alertsTitle: 'Smart Alerts & Audit Stream',
-    footerCopy: 'Nabd Agents — Interactive MVP & Approved Product Plan | Ammar Mohammed • 2026-11-19',
-    resetDemo: 'Reset Demo Data',
+    footerCopy: 'Nabd Agents — Single Source of Truth & Coordination Ledger | 2026',
+    resetDemo: 'Reset Local Cache',
     searchPlaceholder: 'Instant search agents, tasks, messages... (Press /)',
-    shortcutsHint: 'Shortcuts: [ / ] Search • [ R ] Sync • [ 1-6 ] Views • [ Esc ] Close',
+    shortcutsHint: 'Shortcuts: [ / ] Search • [ R ] Sync • [ 1-4 ] Views • [ Esc ] Close',
     nav: {
       overview: 'Overview',
       board: 'Status Board',
       tasks: 'Tasks & Artifacts',
-      handoffs: 'Handoff Ledger',
-      pipeline: 'Edge Pipeline',
-      blueprint: 'Blueprint & ROI'
+      handoffs: 'Handoff Ledger'
     },
     states: {
       working: 'Working',
-      idle: 'Idle / Ready',
-      waiting_human: 'Waiting Human',
+      waiting: 'Waiting',
+      idle: 'Idle',
+      offline: 'Offline',
+      error: 'Error',
+      done: 'Done',
+      waiting_human: 'Waiting for Human',
       blocked: 'Blocked',
       unresponsive: 'Unresponsive'
     },
+    taskStates: {
+      todo: 'Todo',
+      in_progress: 'In Progress',
+      waiting_review: 'Waiting Review',
+      blocked: 'Blocked',
+      done: 'Done',
+      cancelled: 'Cancelled'
+    },
     handoffStates: {
-      sent: 'Sent',
-      received: 'Received',
+      pending: 'Pending Review',
       accepted: 'Accepted',
-      completed: 'Completed'
+      returned: 'Returned for Fixes'
     },
     connTypes: {
-      github: 'GitHub Agent File',
-      email: 'Structured Inbound Email',
-      cli: 'API + CLI (Phase 2)'
+      email: 'Email Channel',
+      github: 'GitHub Repo',
+      cli: 'Local CLI'
     },
     tower: {
       title: 'Who Has the Next Step?',
       subtitle: 'Coordination Tower & Immediate Next Actions',
       emptyTitle: 'No tasks awaiting action — all tasks completed or running smoothly',
       emptyDesc: 'Zero stalled or returned handoffs requiring urgent intervention. You can monitor heartbeats or check the handoff ledger.',
+      noTasksTitle: 'No tasks currently registered in state file',
+      noTasksDesc: 'The agents-state.json file does not contain registered tasks yet.',
       actionNeeded: 'action needed',
       actionsNeeded: 'actions needed',
       allClear: 'All Clear',
+      noTasksBadge: 'No Tasks',
       returnedBadge: 'Returned (Fix Needed)',
       pendingBadge: 'Pending (Review Needed)',
       acceptedBadge: 'Accepted (In Progress)',
@@ -122,46 +153,6 @@ const I18N = {
 // =========================================================================
 // 2. GROUNDED INITIAL STATE
 // =========================================================================
-const F24_MANIFEST = `Nabd reliability/F-24 local handoff
-Branch: audit/reliability
-Base main: 155f16bf65d71350c888ce1fdd5b73805ebc8ae5
-Reliability commit: 40ca457df79a802a592dcd0439ce6d65a568245f
-F-24 integration commit: 98badfcc50f050841a8d68141041f9738699d602
-
-Red real MCP before integration: EXIT 1 (f24-integrate-real-red.log)
-Green real MCP after integration: EXIT 0 (f24-integrate-real-green.log)
-Extended F-24, x32/cancellation, PID tests: EXIT 0
-Each listed f24-mutation-*.log: EXIT 1 (expected test failure; restored afterwards)
-
-Clean archive gate:
-GOFMT: test -z "$(gofmt -l .)" EXIT 0
-BUILD: CGO disabled; go build ./... EXIT 0
-VET: go vet ./... EXIT 0
-MODVERIFY: go mod verify EXIT 0
-TEST: go test ./... -v -count=1 -p 2 EXIT 0
-RACE: go test -race ./... -short -count=1 -p 2 EXIT 0
-STATIC: staticcheck 2025.1.1 ./... EXIT 0
-ANDROID: Android/arm64 CGO disabled; go build ./... EXIT 0
-WINDOWS: Windows/amd64 CGO disabled; go build ./... EXIT 0
-The real 60-second test was included in TEST; RACE used -short.
-No Termux runtime test and no push or merge were performed.`;
-
-const F24_SAMPLE_LOGS = `--- f24-integrate-real-red.log (Before Integration) ---
-FAIL: TestF24IntegrationRealMCPAndEnvironment (0.25s)
-  mcp_integration_linux_test.go:77: real MCP request failed:
-  Error: mcp call failed: client not initialized
-
---- f24-integrate-real-green.log (After Integration) ---
-ok   github.com/amiraq1/nabd/internal/tools   0.481s
-
---- f24-clean-RACE.log ---
-ok   github.com/amiraq1/nabd/cmd/agent        4.189s
-ok   github.com/amiraq1/nabd/cmd/mcp-server   1.045s
-ok   github.com/amiraq1/nabd/internal/audit   1.013s
-ok   github.com/amiraq1/nabd/internal/llm     1.023s
-ok   github.com/amiraq1/nabd/internal/shadow  1.096s
-ok   github.com/amiraq1/nabd/internal/tools   14.028s`;
-
 function createDefaultState() {
   return {
     lang: 'ar',
@@ -173,183 +164,50 @@ function createDefaultState() {
     liveStatusState: 'checking', // 'cached', 'checking', 'live', 'offline'
     liveError: null,
     autoRefresh: true,
+    autoRefreshSecondsRemaining: 30,
     searchQuery: '',
     lastFingerprint: '',
     liveMessages: [],
     boardFilter: 'all',
-    blueprintTab: 'architecture',
-    pipelineMode: 'github',
-    pricing: {
-      fixedCost: 50,
-      proPrice: 10,
-      varCost: 1.5,
-      targetSubs: 25
-    },
+    taskFilterOwner: 'all',
+    taskFilterStatus: 'all',
     agents: [
       {
         id: 'muse',
         name: 'Muse',
-        roleAr: 'مساعد شخصي وتنسيق (سحابي)',
-        roleEn: 'Personal Assistant & Coordination (Cloud)',
+        roleAr: 'مساعد شخصي وتنسيق',
+        roleEn: 'Personal Assistant & Coordination',
         connection: 'email',
         config: 'agents-state.json',
-        status: 'working',
+        status: 'idle',
         ttlMinutes: 60,
-        minutesAgo: 4,
-        activeTaskId: 'ربط الوكيلين بلوحة نبض الوكلاء',
+        minutesAgo: 0,
+        activeTaskId: 'جاهز للتكليفات',
         color: 'emerald'
       },
       {
         id: 'site-agent',
         name: 'موقعي',
-        roleAr: 'وكيل موقع amnabd.com (على Cue)',
-        roleEn: 'amnabd.com Site Agent (on Cue)',
+        roleAr: 'وكيل موقع amnabd.com',
+        roleEn: 'amnabd.com Site Agent',
         connection: 'email',
         config: 'agents-state.json',
-        status: 'waiting_human',
-        ttlMinutes: 45,
-        minutesAgo: 8,
-        activeTaskId: 'بانتظار مراجعة PR #1 في agent-hub',
-        color: 'amber'
-      },
-      {
-        id: 'nabd-coder',
-        name: 'nabd-coder',
-        roleAr: 'وكيل برمجة وموثوقية (محلي)',
-        roleEn: 'Coding & Reliability Agent (Local)',
-        connection: 'cli',
-        config: 'POST /v1/heartbeat',
         status: 'idle',
-        ttlMinutes: 120,
-        minutesAgo: 12,
-        activeTaskId: 'F-24',
-        color: 'cyan'
+        ttlMinutes: 60,
+        minutesAgo: 0,
+        activeTaskId: 'جاهز للتكليفات',
+        color: 'emerald'
       }
     ],
-    tasks: [
-      {
-        id: 'sec-phase1',
-        titleAr: 'المرحلة 1 الأمنية لموقع amnabd.com',
-        titleEn: 'Security Phase 1 for amnabd.com',
-        ownerId: 'site-agent',
-        state: 'working',
-        updatedAt: '2026-11-19 21:21',
-        summaryAr: 'تنفيذ القائمة المصححة للمرحلة 1 الأمنية وربط PR #94.',
-        summaryEn: 'Security phase 1 execution and linking PR #94.',
-        artifacts: [
-          {
-            type: 'pr',
-            label: 'amnabd-deals-web/pull/94',
-            url: 'https://github.com/amiraq1/amnabd-deals-web/pull/94',
-            checks: 'passed (tests)',
-            commit: 'commit-sec-94',
-            branch: 'feat/sec-phase1',
-            details: 'Pull Request: https://github.com/amiraq1/amnabd-deals-web/pull/94\nOwner: site-agent\nStatus: in_progress'
-          }
-        ]
-      },
-      {
-        id: 'F-24',
-        titleAr: 'تسليم موثوقية MCP الحقيقي وإلغاء العمليات (audit/reliability)',
-        titleEn: 'Real MCP Integration & Process Cancellation Reliability Handoff',
-        ownerId: 'nabd-coder',
-        state: 'completed',
-        updatedAt: '2026-11-14 19:35',
-        summaryAr: 'اجتاز جميع بوابات Clean Gate (9/9) و13 اختبار Mutation وتكامل MCP الحقيقي (Red → Green).',
-        summaryEn: 'Passed all 9/9 Clean Gate checks, 13 mutation tests, and real MCP integration (Red → Green).',
-        artifacts: [
-          {
-            type: 'evidence_zip',
-            label: 'nabd-f24-evidence.zip (28 files)',
-            checks: 'passed (9/9 gates)',
-            commit: '98badfcc50f050841a8d68141041f9738699d602',
-            branch: 'audit/reliability',
-            details: F24_MANIFEST + '\n\n' + F24_SAMPLE_LOGS
-          }
-        ]
-      },
-      {
-        id: 'perf-opt-phase',
-        titleAr: 'المرحلة الاحترافية لتحسين السرعة والأداء الشامل لموقع amnabd.com',
-        titleEn: 'Comprehensive Performance Optimization for amnabd.com',
-        ownerId: 'site-agent',
-        state: 'waiting_human',
-        updatedAt: '2026-11-19 23:05',
-        summaryAr: 'اكتمال تحسين Core Web Vitals ورفع PR #96 مع اجتياز 633 فحصًا بنجاح.',
-        summaryEn: 'Completed Core Web Vitals optimization and opened PR #96 with 633 passed tests.',
-        handoff: {
-          from: 'site-agent',
-          to: 'muse',
-          at: '2026-11-19T23:05:00+03:00',
-          status: 'pending',
-          summary: 'اكتمال المرحلة الاحترافية لتحسين السرعة والأداء الشامل لموقع amnabd.com بنجاح (633 اختبار، bundle budget 122.94KB)',
-          next_step: 'مراجعة واعتماد PR #96 ودمجه إلى main',
-          evidence_url: 'https://github.com/amiraq1/amnabd-deals-web/pull/96'
-        },
-        artifacts: [
-          {
-            type: 'pr',
-            label: 'amnabd-deals-web/pull/96',
-            url: 'https://github.com/amiraq1/amnabd-deals-web/pull/96',
-            checks: 'passed (633 tests, bundle 122.94KB)',
-            commit: '274287c',
-            branch: 'agent/perf-optimization',
-            details: 'Pull Request: https://github.com/amiraq1/amnabd-deals-web/pull/96\nOwner: site-agent\nStatus: waiting_review'
-          }
-        ]
-      }
-    ],
-    handoffs: [
-      {
-        id: 'H-101',
-        taskId: 'sec-phase1',
-        fromId: 'muse',
-        toId: 'site-agent',
-        state: 'accepted',
-        idempotencyKey: 'msg-m1-sec',
-        minutesInState: 14,
-        slaMinutes: 30,
-        summaryAr: 'توجيه بتنفيذ القائمة المصححة للمرحلة 1 الأمنية وربط PR #94.',
-        summaryEn: 'Instruction to execute Security Phase 1 and link PR #94.'
-      },
-      {
-        id: 'H-102',
-        taskId: 'F-24',
-        fromId: 'nabd-coder',
-        toId: 'muse',
-        state: 'completed',
-        idempotencyKey: 'commit-98badfc',
-        minutesInState: 5,
-        slaMinutes: 15,
-        summaryAr: 'حزمة أدلة F-24 مكتملة مع تقرير الفحوصات.',
-        summaryEn: 'F-24 evidence bundle complete with verification logs.'
-      }
-    ],
-    seenKeys: ['msg-m1-sec', 'commit-98badfc'],
+    tasks: [],
     auditEvents: [
       {
-        id: 'AUD-103',
-        time: '21:33:45',
-        type: 'ingest',
-        actor: 'github:merge',
-        msgAr: 'دمج PR #1 بنجاح وتحديث agents-state.json على الفرع الرئيسي.',
-        msgEn: 'PR #1 merged successfully into main, updating agents-state.json.'
-      },
-      {
-        id: 'AUD-102',
-        time: '21:24:21',
-        type: 'ingest',
-        actor: 'agent:site-agent',
-        msgAr: 'تحديث حالة وكيل الموقع إلى waiting (بانتظار مراجعة PR #1).',
-        msgEn: 'Site agent state set to waiting for PR #1 review.'
-      },
-      {
         id: 'AUD-101',
-        time: '20:56:00',
+        time: nowTime(),
         type: 'ingest',
-        actor: 'agent:muse',
-        msgAr: 'تأسيس ملف الحالة المشترك وتكليف مهمة ربط الوكيلين باللوحة.',
-        msgEn: 'Initialized shared state board and assigned agent board task.'
+        actor: 'system:init',
+        msgAr: 'بدء تشغيل اللوحة وتهيئة مصدر الحقيقة المشترك.',
+        msgEn: 'Dashboard initialized with single source of truth.'
       }
     ]
   };
@@ -363,38 +221,55 @@ let searchDebounceTimer = null;
 // 3. STORAGE & SWR ENGINE
 // =========================================================================
 function loadInitialState() {
+  const VALID_VIEWS = new Set(['overview', 'board', 'tasks', 'handoffs']);
   try {
     const raw = localStorage.getItem('nabd_agents_state_v1');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.agents) && Array.isArray(parsed.tasks)) {
         parsed.liveStatusState = 'cached';
-        return Object.assign(createDefaultState(), parsed);
+        const merged = Object.assign(createDefaultState(), parsed);
+        if (!VALID_VIEWS.has(merged.view)) {
+          merged.view = 'overview';
+        }
+        return merged;
       }
     }
   } catch (e) {}
-  return createDefaultState();
+  const def = createDefaultState();
+  if (!VALID_VIEWS.has(def.view)) def.view = 'overview';
+  return def;
 }
 
 function saveState() {
   try {
-    localStorage.setItem('nabd_agents_state_v1', JSON.stringify(state));
+    localStorage.setItem('nabd_agents_state_v1', JSON.stringify({
+      lang: state.lang,
+      view: state.view,
+      agents: state.agents,
+      tasks: state.tasks,
+      liveMessages: state.liveMessages,
+      auditEvents: state.auditEvents,
+      boardFilter: state.boardFilter,
+      taskFilterOwner: state.taskFilterOwner,
+      taskFilterStatus: state.taskFilterStatus,
+      lastFingerprint: state.lastFingerprint
+    }));
   } catch (e) {}
 }
 
-function t(key) {
-  const dict = I18N[state.lang] || I18N.ar;
-  return key.split('.').reduce((acc, k) => (acc && acc[k] !== undefined ? acc[k] : key), dict);
+function t(path) {
+  const parts = path.split('.');
+  let cur = I18N[state.lang] || I18N.ar;
+  for (const p of parts) {
+    if (cur && cur[p] !== undefined) cur = cur[p];
+    else return path;
+  }
+  return cur;
 }
 
 function isAr() {
   return state.lang === 'ar';
-}
-
-// escapeHtml imported from ./modules/security.js
-
-function nowTime() {
-  return new Date().toTimeString().slice(0, 8);
 }
 
 function addAudit(type, actor, msgAr, msgEn) {
@@ -413,76 +288,53 @@ function showToast(msg, variant = 'success') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
   const colors = {
-    success: 'border-emerald-500/50 bg-emerald-950/95 text-emerald-100',
-    warning: 'border-amber-500/50 bg-amber-950/95 text-amber-100',
-    danger: 'border-rose-500/50 bg-rose-950/95 text-rose-100',
-    info: 'border-cyan-500/50 bg-cyan-950/95 text-cyan-100'
-  };
+    success: 'border-emerald-500/50 bg-surface-900/95 text-emerald-300',
+    danger: 'border-rose-500/50 bg-surface-900/95 text-rose-300',
+    warning: 'border-amber-500/50 bg-surface-900/95 text-amber-300',
+    info: 'border-cyan-500/50 bg-surface-900/95 text-cyan-300'
+  }[variant] || 'border-slate-700 bg-surface-900 text-slate-200';
+
   const el = document.createElement('div');
-  el.className = `rounded-xl border px-4 py-3 text-xs font-medium shadow-xl backdrop-blur-md transition-all ${colors[variant] || colors.info}`;
-  el.textContent = msg;
+  el.className = `flex items-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs shadow-2xl glass-card transition-all duration-200 ${colors}`;
+  el.innerHTML = `<span>${variant === 'success' ? '✓' : variant === 'danger' ? '✕' : 'ℹ'}</span><span>${escapeHtml(msg)}</span>`;
   container.appendChild(el);
   setTimeout(() => {
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 250);
-  }, 3200);
-}
-
-function copyText(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => {
-      showToast(isAr() ? 'تم النسخ إلى الحافظة' : 'Copied to clipboard', 'info');
-    }).catch(() => fallbackCopy(text));
-  } else {
-    fallbackCopy(text);
-  }
-}
-
-function fallbackCopy(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try {
-    document.execCommand('copy');
-    showToast(isAr() ? 'تم النسخ إلى الحافظة' : 'Copied to clipboard', 'info');
-  } catch (e) {}
-  ta.remove();
+  }, 2400);
 }
 
 function normalizeAgentStatus(raw) {
-  const val = String(raw || 'idle').toLowerCase().trim();
-  if (val === 'waiting' || val === 'waiting_human' || val === 'needs_human') return 'waiting_human';
-  if (val === 'working' || val === 'active' || val === 'running' || val === 'busy') return 'working';
-  if (val === 'blocked' || val === 'error' || val === 'failed') return 'blocked';
-  if (val === 'unresponsive' || val === 'offline' || val === 'stale') return 'unresponsive';
+  const s = String(raw || '').toLowerCase().trim();
+  if (s === 'working' || s === 'running' || s === 'in_progress') return 'working';
+  if (s === 'waiting' || s === 'waiting_review' || s === 'pending') return 'waiting';
+  if (s === 'waiting_human') return 'waiting_human';
+  if (s === 'idle' || s === 'ready') return 'idle';
+  if (s === 'offline' || s === 'stopped') return 'offline';
+  if (s === 'blocked' || s === 'error') return 'blocked';
+  if (s === 'unresponsive') return 'unresponsive';
+  if (s === 'done' || s === 'completed') return 'done';
   return 'idle';
 }
 
-function minutesSinceIso(isoStr) {
-  if (!isoStr) return 0;
-  const ms = Date.parse(isoStr);
-  if (Number.isNaN(ms)) return 0;
-  return Math.max(0, Math.round((Date.now() - ms) / 60000));
-}
-
 function computeFingerprint(data) {
-  if (!data) return '';
-  const handoffsSig = Array.isArray(data.tasks)
-    ? data.tasks.map((t) => t.handoff ? (t.id + ':' + t.handoff.status + ':' + (t.handoff.decision?.at || '')) : '').join('|')
-    : '';
-  return `${data.updated_at || ''}::${data.agents ? data.agents.length : 0}::${data.tasks ? data.tasks.length : 0}::${data.messages ? data.messages.length : 0}::${handoffsSig}`;
+  try {
+    return JSON.stringify({
+      u: data.updated_at,
+      r: data.revision || 0,
+      a: (data.agents || []).map((x) => [x.id, x.status, x.last_seen, x.current_task]),
+      t: (data.tasks || []).map((x) => [x.id, x.status, x.updated_at, x.handoff?.status, x.handoff?.decision?.at]),
+      m: (data.messages || []).length
+    });
+  } catch (e) {
+    return String(Date.now());
+  }
 }
 
 function applyAgentHubJson(data, sourceLabel, silent = false) {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid JSON root object');
-  }
+  if (!data || typeof data !== 'object') return;
 
-  const rawAgents = Array.isArray(data.agents)
-    ? data.agents
+  const rawAgents = Array.isArray(data.agents) ? data.agents
     : (data.agents && typeof data.agents === 'object'
       ? Object.entries(data.agents).map(([k, v]) => Object.assign({ id: k }, v))
       : []);
@@ -493,7 +345,7 @@ function applyAgentHubJson(data, sourceLabel, silent = false) {
     const role = String(a.role || a.description || 'AI Agent');
     const ttl = Number(a.ttl_minutes || a.ttl || 60);
     const lastSeenIso = a.last_seen || a.last_seen_at || a.updated_at || '';
-    const mins = lastSeenIso ? minutesSinceIso(lastSeenIso) : 0;
+    const mins = lastSeenIso ? (minutesSinceIso(lastSeenIso) ?? 0) : 0;
     let st = normalizeAgentStatus(a.status || a.state);
     if (st === 'working' && lastSeenIso && mins > ttl) {
       st = 'unresponsive';
@@ -524,7 +376,7 @@ function applyAgentHubJson(data, sourceLabel, silent = false) {
     const stRaw = String(tk.status || tk.state || 'working').toLowerCase();
     const st = (stRaw === 'done' || stRaw === 'completed' || stRaw === 'merged') ? 'completed' : normalizeAgentStatus(stRaw);
     const artifacts = [];
-    const prUrl = tk.pr_url || tk.pr || tk.url || tk.link || '';
+    const prUrl = sanitizeUrl(tk.pr_url || tk.pr || tk.url || tk.link || '');
     if (prUrl) {
       artifacts.push({
         type: 'pr',
@@ -586,7 +438,7 @@ function applyAgentHubJson(data, sourceLabel, silent = false) {
 async function fetchLiveAgentHub(silent = false) {
   const primaryUrl = './agents-state.json';
   const remoteUrl = state.liveRemoteUrl || 'https://raw.githubusercontent.com/amiraq1/agent-hub/main/agents-state.json';
-  
+
   const pill = document.getElementById('liveStatusPill');
   if (pill && state.liveStatusState !== 'live') {
     pill.innerHTML = `<span class="h-1.5 w-1.5 rounded-full bg-cyan-400 pulse-dot"></span><span>${isAr() ? 'جارٍ التحقق...' : 'Checking...'}</span>`;
@@ -670,34 +522,12 @@ function updateLiveBarUI() {
   }
 }
 
-// =========================================================================
-// 4. SECRET REDACTOR ENGINE
-// =========================================================================
-function redactSecrets(text) {
-  const patterns = [
-    { name: 'OpenAI/API Key (sk-...)', regex: /\bsk-[A-Za-z0-9_-]{12,}\b/g },
-    { name: 'GitHub Token (ghp_...)', regex: /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g },
-    { name: 'AWS Access Key (AKIA...)', regex: /\bAKIA[0-9A-Z]{12,}\b/g },
-    { name: 'Bearer Token', regex: /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}/gi },
-    { name: 'JWT Token', regex: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g }
-  ];
-  let redacted = text;
-  const found = [];
-  patterns.forEach((p) => {
-    const matches = redacted.match(p.regex);
-    if (matches && matches.length) {
-      found.push(`${p.name} (×${matches.length})`);
-      redacted = redacted.replace(p.regex, '[REDACTED]');
-    }
-  });
-  return { redacted, found };
-}
-
 function getActiveAlerts() {
   const alerts = [];
   state.agents.forEach((a) => {
     if (a.status === 'unresponsive') {
       alerts.push({
+        id: 'alt-unresp-' + a.id,
         level: 'danger',
         titleAr: `وكيل غير متجاوب: ${a.name}`,
         titleEn: `Unresponsive Agent: ${a.name}`,
@@ -707,153 +537,91 @@ function getActiveAlerts() {
       });
     } else if (a.status === 'waiting_human') {
       alerts.push({
+        id: 'alt-human-' + a.id,
         level: 'warning',
         titleAr: `طلب تدخل بشري: ${a.name}`,
         titleEn: `Human Decision Needed: ${a.name}`,
-        descAr: `متوقف على المهمة ${a.activeTaskId || '—'} بانتظار موافقة أو قرار.`,
-        descEn: `Paused on task ${a.activeTaskId || '—'} waiting for approval.`,
+        descAr: isAr() ? 'يتطلب قراراً صريحاً قبل استئناف المهمة.' : 'Awaiting explicit confirmation.',
         targetView: 'board'
       });
     }
   });
-  state.handoffs.forEach((h) => {
-    if ((h.state === 'sent' || h.state === 'received') && h.minutesInState > h.slaMinutes) {
+
+  // Handoff returned alerts
+  state.tasks.forEach((t) => {
+    if (t.handoff && t.handoff.status === 'returned') {
       alerts.push({
+        id: 'alt-returned-' + t.id,
         level: 'danger',
-        titleAr: `تسليم معلّق معرّض للضياع: ${h.id} (${h.taskId})`,
-        titleEn: `Stalled Handoff at Risk: ${h.id} (${h.taskId})`,
-        descAr: `بقي في حالة ${h.state} لمدة ${h.minutesInState} دقيقة دون قبول (المهلة ${h.slaMinutes} دقيقة).`,
-        descEn: `Stuck in ${h.state} for ${h.minutesInState}m without acceptance (SLA ${h.slaMinutes}m).`,
-        targetView: 'handoffs'
+        titleAr: `تسليم معاد للتصحيح: ${t.id}`,
+        titleEn: `Returned Handoff: ${t.id}`,
+        descAr: `السبب: ${t.handoff.decision?.reason || 'مطلوب مراجعة الملاحظات'}`,
+        descEn: `Reason: ${t.handoff.decision?.reason || 'Revision required'}`,
+        targetView: 'tasks'
       });
     }
   });
+
   return alerts;
 }
 
 function stateBadge(status) {
-  const styles = {
-    working: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-    idle: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
-    waiting_human: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-    blocked: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
-    unresponsive: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
-    completed: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-  };
-  const dot = {
-    working: 'bg-emerald-400 pulse-dot',
-    idle: 'bg-sky-400',
-    waiting_human: 'bg-amber-400',
-    blocked: 'bg-orange-400',
-    unresponsive: 'bg-rose-500',
-    completed: 'bg-emerald-400'
-  };
-  const label = status === 'completed' ? (isAr() ? 'مكتملة' : 'Completed') : t('states.' + status);
-  return `<span class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${styles[status] || styles.idle}">
-    <span class="h-1.5 w-1.5 rounded-full ${dot[status] || 'bg-slate-400'}"></span>
-    ${escapeHtml(label)}
-  </span>`;
+  const cfg = {
+    working: { bg: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300', dot: 'bg-emerald-400' },
+    waiting: { bg: 'bg-amber-500/15 border-amber-500/40 text-amber-300', dot: 'bg-amber-400' },
+    waiting_human: { bg: 'bg-amber-500/20 border-amber-500/50 text-amber-200', dot: 'bg-amber-400' },
+    idle: { bg: 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300', dot: 'bg-cyan-400' },
+    offline: { bg: 'bg-slate-700/40 border-slate-600 text-slate-300', dot: 'bg-slate-400' },
+    error: { bg: 'bg-rose-500/20 border-rose-500/50 text-rose-300', dot: 'bg-rose-400' },
+    blocked: { bg: 'bg-rose-500/15 border-rose-500/40 text-rose-300', dot: 'bg-rose-400' },
+    unresponsive: { bg: 'bg-rose-500/25 border-rose-500/60 text-rose-200', dot: 'bg-rose-400' },
+    completed: { bg: 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200', dot: 'bg-emerald-400' },
+    done: { bg: 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200', dot: 'bg-emerald-400' }
+  }[status] || { bg: 'bg-slate-800 border-slate-700 text-slate-300', dot: 'bg-slate-400' };
+
+  return `
+    <span class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${cfg.bg}">
+      <span class="h-1.5 w-1.5 rounded-full ${cfg.dot}"></span>
+      <span>${escapeHtml(t('states.' + status))}</span>
+    </span>
+  `;
 }
 
 // =========================================================================
-// 4.1 COORDINATION TOWER ENGINE («نبض | برج التنسيق»)
+// 4. COORDINATION TOWER VIEW RENDERER
 // =========================================================================
-// isValidSafeUrl and sanitizeUrl imported from ./modules/security.js
-
-function formatWaitingDuration(minutes) {
-  const m = Math.max(0, Number(minutes) || 0);
-  if (m < 1) return isAr() ? 'الآن (أقل من دقيقة)' : 'Just now (<1m)';
-  if (m === 1) return isAr() ? 'منذ دقيقة واحدة' : '1 minute ago';
-  if (m === 2) return isAr() ? 'منذ دقيقتين' : '2 minutes ago';
-  if (m < 11) return isAr() ? `منذ ${m} دقائق` : `${m} minutes ago`;
-  if (m < 60) return isAr() ? `منذ ${m} دقيقة` : `${m} minutes ago`;
-  const hours = Math.floor(m / 60);
-  const rem = m % 60;
-  if (hours === 1) return isAr() ? `منذ ساعة${rem ? ' و' + rem + ' دقيقة' : ''}` : `1h ${rem ? rem + 'm' : ''} ago`;
-  if (hours === 2) return isAr() ? `منذ ساعتين${rem ? ' و' + rem + ' دقيقة' : ''}` : `2h ${rem ? rem + 'm' : ''} ago`;
-  if (hours < 24) return isAr() ? `منذ ${hours} ساعات${rem ? ' و' + rem + ' دقيقة' : ''}` : `${hours}h ${rem ? rem + 'm' : ''} ago`;
-  const days = Math.floor(hours / 24);
-  const remH = hours % 24;
-  return isAr() ? `منذ ${days} ${days === 1 ? 'يوم' : days === 2 ? 'يومين' : 'أيام'}${remH ? ' و' + remH + ' س' : ''}` : `${days}d ago`;
-}
-
-function getCoordinationTowerItems(tasks, agents) {
-  const activeTasks = (tasks || []).filter(
-    (t) => t.status !== 'done' && t.status !== 'cancelled' && t.state !== 'completed' && t.rawStatus !== 'done' && t.rawStatus !== 'completed' && t.rawStatus !== 'cancelled'
-  );
-
-  const items = [];
-
-  for (const task of activeTasks) {
-    if (!task.handoff) continue;
-    const h = task.handoff;
-    const fromAgent = (agents || []).find((a) => a.id === h.from) || { id: h.from, name: h.from };
-    const toAgent = (agents || []).find((a) => a.id === h.to) || { id: h.to, name: h.to };
-
-    let actorId;
-    let actorName;
-    let actorRoleAr;
-    let actorRoleEn;
-    let waitTimestamp;
-    let rank;
-    let returnReason = null;
-
-    if (h.status === 'returned') {
-      rank = 1;
-      actorId = h.from;
-      actorName = fromAgent.name || h.from;
-      actorRoleAr = 'المرسل (مطلوب تصحيح سبب الإعادة وإعادة التسليم)';
-      actorRoleEn = 'Sender (Action needed to address return reason)';
-      waitTimestamp = h.decision?.at || h.at;
-      returnReason = h.decision?.reason || null;
-    } else if (h.status === 'pending') {
-      rank = 2;
-      actorId = h.to;
-      actorName = toAgent.name || h.to;
-      actorRoleAr = 'المستلم (مطلوب مراجعة التسليم واتخاذ القرار)';
-      actorRoleEn = 'Recipient (Review handoff and decide)';
-      waitTimestamp = h.at;
-    } else if (h.status === 'accepted') {
-      rank = 3;
-      actorId = h.to;
-      actorName = toAgent.name || h.to;
-      actorRoleAr = 'المستلم (التسليم مقبول والمهمة جارية)';
-      actorRoleEn = 'Recipient (Handoff accepted, execution in progress)';
-      waitTimestamp = h.decision?.at || h.at;
-    } else {
-      continue;
-    }
-
-    const waitMs = Math.max(0, Date.now() - new Date(waitTimestamp).getTime());
-    const waitMinutes = Number.isNaN(waitMs) ? 0 : Math.floor(waitMs / (1000 * 60));
-
-    items.push({
-      task,
-      handoff: h,
-      rank,
-      actorId,
-      actorName,
-      actorRoleAr,
-      actorRoleEn,
-      nextStep: h.next_step,
-      summary: h.summary,
-      evidenceUrl: isValidSafeUrl(h.evidence_url) ? h.evidence_url : null,
-      waitTimestamp,
-      waitMinutes,
-      returnReason
-    });
-  }
-
-  items.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    return b.waitMinutes - a.waitMinutes;
-  });
-
-  return items;
-}
-
 function renderCoordinationTower() {
   const items = getCoordinationTowerItems(state.tasks, state.agents);
+
+  // Honest Empty State: distinguish between 0 tasks vs all tasks completed
+  if (!state.tasks || state.tasks.length === 0) {
+    return `
+      <section class="rounded-2xl border border-slate-700/80 bg-surface-900/90 p-5 contain-opt space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-800 border border-slate-700 text-slate-300">
+              ℹ
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h2 class="text-base font-bold text-white tracking-tight">${escapeHtml(t('tower.title'))}</h2>
+                <span class="rounded-full border border-slate-700 bg-surface-950 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">
+                  ${escapeHtml(t('tower.noTasksBadge'))}
+                </span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(t('tower.subtitle'))}</p>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-slate-800 bg-surface-950/70 p-4 text-center sm:text-start">
+          <div class="space-y-1">
+            <h3 class="text-sm font-bold text-slate-300">${escapeHtml(t('tower.noTasksTitle'))}</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(t('tower.noTasksDesc'))}</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
 
   if (!items.length) {
     return `
@@ -877,18 +645,13 @@ function renderCoordinationTower() {
             </div>
           </div>
         </div>
-
         <div class="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-slate-800 bg-surface-950/70 p-4 text-center sm:text-start">
           <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xl font-bold">
             ✓
           </div>
           <div class="space-y-1">
-            <h3 class="text-sm font-bold text-emerald-200">
-              ${escapeHtml(t('tower.emptyTitle'))}
-            </h3>
-            <p class="text-xs text-slate-400 leading-relaxed">
-              ${escapeHtml(t('tower.emptyDesc'))}
-            </p>
+            <h3 class="text-sm font-bold text-emerald-200">${escapeHtml(t('tower.emptyTitle'))}</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(t('tower.emptyDesc'))}</p>
           </div>
         </div>
       </section>
@@ -948,9 +711,14 @@ function renderCoordinationTower() {
                   </span>
                   <span class="rounded-md bg-surface-950 px-2 py-0.5 font-mono text-xs font-bold text-cyan-300 border border-slate-800">${escapeHtml(item.task.id)}</span>
                   <span class="text-sm font-bold text-white">${escapeHtml(isAr() ? (item.task.titleAr || item.task.title) : (item.task.titleEn || item.task.title))}</span>
+                  ${item.isCorruptedDate ? `
+                    <span class="rounded-md bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 font-mono text-[10px] font-bold text-rose-300">
+                      ⚠️ ${isAr() ? 'تاريخ غير صالح' : 'Invalid Date'}
+                    </span>
+                  ` : ''}
                 </div>
                 <div class="flex items-center gap-2 text-xs">
-                  <span class="font-mono text-[11px] text-slate-400">⏱ ${escapeHtml(t('tower.waitingAgeLabel'))}: <strong class="text-slate-200">${formatWaitingDuration(item.waitMinutes)}</strong></span>
+                  <span class="font-mono text-[11px] text-slate-400">⏱ ${escapeHtml(t('tower.waitingAgeLabel'))}: <strong class="text-slate-200">${formatWaitingDuration(item.waitMinutes, isAr())}</strong></span>
                 </div>
               </div>
 
@@ -961,7 +729,7 @@ function renderCoordinationTower() {
                   <strong class="text-white bg-surface-900 border border-slate-700 rounded-md px-2 py-0.5 font-bold">${escapeHtml(item.actorName)}</strong>
                   <span class="text-[11px] text-slate-400">(${escapeHtml(isAr() ? item.actorRoleAr : item.actorRoleEn)})</span>
                 </div>
-                <div class="text-[11px] font-mono text-slate-500">${escapeHtml(item.waitTimestamp || '')}</div>
+                <div class="text-[11px] font-mono text-slate-400">${escapeHtml(item.waitTimestamp || '')}</div>
               </div>
 
               <!-- Next Step Required -->
@@ -995,7 +763,7 @@ function renderCoordinationTower() {
                       <span>📎 ${escapeHtml(t('tower.evidenceLabel'))}</span>
                       <span class="text-[10px]">↗</span>
                     </a>
-                  ` : `<span class="text-[11px] text-slate-500">${isAr() ? 'لا يوجد رابط دليل مرفق' : 'No evidence link'}</span>`}
+                  ` : `<span class="text-[11px] text-slate-400">${isAr() ? 'لا يوجد رابط دليل مرفق' : 'No evidence link'}</span>`}
                 </div>
                 <button type="button" data-open-task-details="${escapeHtml(item.task.id)}" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-surface-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-emerald-400 hover:text-white transition">
                   <span>${escapeHtml(t('tower.detailsBtn'))}</span>
@@ -1018,15 +786,12 @@ function openTaskDetailsModal(taskId) {
   const h = task.handoff;
   const isCached = state.liveStatusState === 'cached' || state.liveStatusState === 'offline';
 
-  // Calculate wait duration if handoff exists
-  let handoffWaitMins = 0;
+  let handoffWaitMins = null;
   if (h && h.at) {
     const ts = (h.status === 'returned' && h.decision?.at) ? h.decision.at : h.at;
-    const ms = Date.now() - new Date(ts).getTime();
-    handoffWaitMins = Number.isNaN(ms) ? 0 : Math.max(0, Math.floor(ms / 60000));
+    handoffWaitMins = minutesSinceIso(ts);
   }
 
-  // 1. Banner for Cache status (Requirement 4)
   const cacheBanner = isCached
     ? `<div class="rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-center gap-2.5">
          <span class="text-base">⚠️</span>
@@ -1041,42 +806,37 @@ function openTaskDetailsModal(taskId) {
          </div>
        </div>`;
 
-  // 2. Disambiguation between 3 Timestamps (Requirement 4)
   const disambiguationBoxes = `
     <div class="space-y-2">
       <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">${isAr() ? 'فصل التواريخ الصريح (Timestamp Disambiguation)' : 'Timestamp Disambiguation'}</div>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-        <!-- Handoff Age -->
         <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
           <div class="text-slate-400 text-[10px]">${isAr() ? 'عمر انتظار التسليم' : 'Handoff Waiting Age'}</div>
           <div class="font-mono font-bold mt-1 ${h ? (h.status === 'returned' ? 'text-rose-400' : 'text-amber-300') : 'text-slate-500'}">
-            ${h ? formatWaitingDuration(handoffWaitMins) : (isAr() ? 'لا يوجد تسليم معلق' : 'No pending handoff')}
+            ${h ? formatWaitingDuration(handoffWaitMins, isAr()) : (isAr() ? 'لا يوجد تسليم معلق' : 'No pending handoff')}
           </div>
-          <div class="text-[10px] text-slate-500 truncate mt-0.5">${h ? (h.at || '—') : '—'}</div>
+          <div class="text-[10px] text-slate-400 truncate mt-0.5">${h ? (h.at || '—') : '—'}</div>
         </div>
 
-        <!-- Agent Last Seen -->
         <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
           <div class="text-slate-400 text-[10px]">${isAr() ? 'آخر ظهور للوكيل المالك' : 'Agent Last Seen'}</div>
           <div class="font-mono font-bold text-cyan-300 mt-1">
-            ${formatWaitingDuration(ownerAgent.minutesAgo || 0)}
+            ${formatWaitingDuration(ownerAgent.minutesAgo || 0, isAr())}
           </div>
-          <div class="text-[10px] text-slate-500 truncate mt-0.5">${escapeHtml(ownerAgent.name)} (${escapeHtml(ownerAgent.status)})</div>
+          <div class="text-[10px] text-slate-400 truncate mt-0.5">${escapeHtml(ownerAgent.name)} (${escapeHtml(ownerAgent.status)})</div>
         </div>
 
-        <!-- Data Fetch Age -->
         <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
           <div class="text-slate-400 text-[10px]">${isAr() ? 'توقيت جلب البيانات المعروضة' : 'Data Fetch Time'}</div>
           <div class="font-mono font-bold text-emerald-300 mt-1">
             ${state.liveLastSync || (isAr() ? 'ذاكرة أولية' : 'Initial Cache')}
           </div>
-          <div class="text-[10px] text-slate-500 truncate mt-0.5">${isCached ? (isAr() ? 'مخزن محلياً' : 'Local Storage') : (isAr() ? 'جلب حي من GitHub' : 'Live GitHub Fetch')}</div>
+          <div class="text-[10px] text-slate-400 truncate mt-0.5">${isCached ? (isAr() ? 'مخزن محلياً' : 'Local Storage') : (isAr() ? 'جلب حي من GitHub' : 'Live GitHub Fetch')}</div>
         </div>
       </div>
     </div>
   `;
 
-  // 3. Handoff receipt details
   let handoffHtml = '';
   if (h) {
     const fromAgent = state.agents.find((a) => a.id === h.from) || { id: h.from, name: h.from };
@@ -1089,7 +849,7 @@ function openTaskDetailsModal(taskId) {
         ? 'border-amber-500/40 bg-amber-500/15 text-amber-200'
         : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
 
-    const safeEvidence = isValidSafeUrl(h.evidence_url) ? h.evidence_url : null;
+    const safeEvidence = sanitizeUrl(h.evidence_url);
 
     handoffHtml = `
       <div class="rounded-2xl border ${isReturned ? 'border-rose-500/40 bg-rose-950/20' : isPending ? 'border-amber-500/30 bg-amber-950/15' : 'border-emerald-500/30 bg-emerald-950/15'} p-4 space-y-3">
@@ -1131,11 +891,11 @@ function openTaskDetailsModal(taskId) {
           </div>
         ` : ''}
 
-        ${sanitizeUrl(safeEvidence) ? `
+        ${safeEvidence ? `
           <div class="pt-2 border-t border-slate-800/80">
-            <a href="${escapeHtml(sanitizeUrl(safeEvidence))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+            <a href="${escapeHtml(safeEvidence)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
               <span>↗ ${isAr() ? 'عرض الدليل والمخرجات المرتبطة' : 'Inspect Evidence Artifact'}</span>
-              <span class="font-mono text-[10px] opacity-75">(${escapeHtml(sanitizeUrl(safeEvidence))})</span>
+              <span class="font-mono text-[10px] opacity-75">(${escapeHtml(safeEvidence)})</span>
             </a>
             <p class="text-[10px] text-slate-400 mt-1.5 italic">
               ℹ ${isAr() ? 'فتح الرابط للمشاهدة والتحقق فقط — لا يؤدي تلقائياً إلى قبول التسليم. يتم تحديث الحالة عبر تعديل ملف agents-state.json في المستودع.' : 'Note: Reviewing evidence does not automatically accept the handoff. Updates must be committed to agents-state.json.'}
@@ -1146,10 +906,7 @@ function openTaskDetailsModal(taskId) {
     `;
   }
 
-  // 4. Chronological Available Sequence (Requirement 4)
   const timelineEvents = [];
-
-  // Initial task creation / update
   timelineEvents.push({
     at: task.updatedAt || '2026-11-19T21:00:00Z',
     type: 'task',
@@ -1159,7 +916,6 @@ function openTaskDetailsModal(taskId) {
     desc: isAr() ? (task.summaryAr || task.summaryEn) : (task.summaryEn || task.summaryAr)
   });
 
-  // Matching messages
   state.liveMessages.forEach((m) => {
     if (m.taskId === task.id || m.task === task.id) {
       timelineEvents.push({
@@ -1173,7 +929,6 @@ function openTaskDetailsModal(taskId) {
     }
   });
 
-  // Handoff submission
   if (h && h.at) {
     timelineEvents.push({
       at: h.at,
@@ -1185,7 +940,6 @@ function openTaskDetailsModal(taskId) {
     });
   }
 
-  // Handoff decision
   if (h && h.decision && h.decision.at) {
     timelineEvents.push({
       at: h.decision.at,
@@ -1197,14 +951,13 @@ function openTaskDetailsModal(taskId) {
     });
   }
 
-  // Sort chronologically by date
   timelineEvents.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
   const sequenceHtml = `
     <div class="space-y-2">
       <div class="flex items-center justify-between">
         <h4 class="text-xs font-bold text-white">${isAr() ? 'التسلسل المتاح (Available Sequence)' : 'Available Sequence'}</h4>
-        <span class="font-mono text-[10px] text-slate-500">${timelineEvents.length} ${isAr() ? 'حدث متاح' : 'events'}</span>
+        <span class="font-mono text-[10px] text-slate-400">${timelineEvents.length} ${isAr() ? 'حدث متاح' : 'events'}</span>
       </div>
       <p class="text-[11px] text-slate-400 mb-2 leading-relaxed">
         ${isAr()
@@ -1229,225 +982,61 @@ function openTaskDetailsModal(taskId) {
     </div>
   `;
 
-  // 3.1 Quick Actions Bridge (Copy JSON Patch / GitHub Web Edit Link)
-  const quickActionsHtml = `
-    <div class="rounded-2xl border border-slate-800 bg-surface-950/90 p-4 space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-bold text-white">${isAr() ? 'إجراءات التنسيق السريعة (Action Quick-Bridge)' : 'Action Quick-Bridge'}</span>
-          <span class="rounded bg-surface-900 border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">GitHub</span>
-        </div>
+  openModal(`${task.id} — ${isAr() ? (task.titleAr || task.title) : (task.titleEn || task.title)}`, `
+    <div class="space-y-5">
+      ${cacheBanner}
+      ${disambiguationBoxes}
+      ${handoffHtml}
+      ${sequenceHtml}
+      <div class="pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
+        <span class="text-slate-400">${isAr() ? 'لإجراء أي تعديل، قم بإنشاء PR وتحديث الملف:' : 'To update state, submit a PR to:'}</span>
         <a href="https://github.com/amiraq1/agent-hub/edit/main/agents-state.json" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-2">
-          <span>${isAr() ? 'تحرير agents-state.json على GitHub' : 'Edit on GitHub'}</span>
-          <span class="text-[10px]">↗</span>
+          <span>agents-state.json</span>
+          <span>↗</span>
         </a>
       </div>
-      <p class="text-[11px] text-slate-400 leading-relaxed">
-        ${isAr()
-          ? 'انسخ رقعة القرار الجاهزة بنقرة واحدة، ثم افتح رابط التحرير المباشر على GitHub لإتمام الاعتماد أو الإعادة بثوانٍ:'
-          : 'Copy the decision JSON patch in one click, then edit agents-state.json directly on GitHub:'}
-      </p>
-      <div class="flex flex-wrap gap-2 pt-1">
-        <button type="button" data-copy-patch="accept" class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 transition">
-          <span>✓ ${isAr() ? 'نسخ كود الاعتماد (Accept JSON)' : 'Copy Accept JSON'}</span>
-        </button>
-        <button type="button" data-copy-patch="return" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 transition">
-          <span>↩ ${isAr() ? 'نسخ كود الإعادة (Return JSON)' : 'Copy Return JSON'}</span>
-        </button>
-      </div>
     </div>
-  `;
+  `);
+}
 
-  openModal(
-    `${task.id} — ${isAr() ? (task.titleAr || task.title) : (task.titleEn || task.title)}`,
-    `
-      <div class="space-y-4 text-xs">
-        ${cacheBanner}
-        ${disambiguationBoxes}
-        ${handoffHtml}
-        ${quickActionsHtml}
-        ${sequenceHtml}
-      </div>
-    `
+function filterItems() {
+  const q = (state.searchQuery || '').toLowerCase().trim();
+  const filterByQuery = (item, fields) => {
+    if (!q) return true;
+    return fields.some((f) => String(item[f] || '').toLowerCase().includes(q));
+  };
+
+  const agents = state.agents.filter((a) =>
+    filterByQuery(a, ['name', 'id', 'roleAr', 'roleEn', 'activeTaskId', 'status'])
   );
 
-  const modalBody = document.getElementById('appModalBody');
-  if (modalBody) {
-    modalBody.querySelectorAll('[data-copy-patch]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const mode = btn.getAttribute('data-copy-patch');
-        const nowIso = new Date().toISOString();
-        let payload = {};
-        if (mode === 'accept') {
-          payload = {
-            status: "done",
-            handoff: {
-              status: "accepted",
-              decision: {
-                by: "muse",
-                at: nowIso,
-                reason: "تمت مراجعة واعتماد المخرجات بنجاح والموافقة على الدمج."
-              }
-            }
-          };
-        } else {
-          payload = {
-            status: "in_progress",
-            handoff: {
-              status: "returned",
-              decision: {
-                by: "muse",
-                at: nowIso,
-                reason: "يرجى معالجة الملاحظات التالية وإعادة التسليم: [اكتب السبب هنا]"
-              }
-            }
-          };
-        }
-        copyText(JSON.stringify(payload, null, 2));
-        showToast(isAr() ? 'تم نسخ كود القرار (JSON) إلى الحافظة' : 'Copied decision JSON to clipboard', 'success');
-      });
-    });
+  let tasks = state.tasks.filter((t) =>
+    filterByQuery(t, ['titleAr', 'titleEn', 'id', 'ownerId', 'summaryAr', 'summaryEn', 'state'])
+  );
+
+  if (state.taskFilterOwner && state.taskFilterOwner !== 'all') {
+    tasks = tasks.filter((t) => t.ownerId === state.taskFilterOwner);
   }
+
+  if (state.taskFilterStatus && state.taskFilterStatus !== 'all') {
+    tasks = tasks.filter((t) => t.rawStatus === state.taskFilterStatus || t.state === state.taskFilterStatus);
+  }
+
+  const messages = state.liveMessages.filter((m) =>
+    filterByQuery(m, ['from', 'to', 'text', 'taskId'])
+  );
+
+  return { agents, tasks, messages };
 }
 
 // =========================================================================
-// 5. ZERO-DEPENDENCY NATIVE SVG BREAK-EVEN CHART (Instant Render)
+// 5. VIEW RENDERERS (OVERVIEW, BOARD, TASKS, HANDOFFS)
 // =========================================================================
-function renderSvgBreakEven(containerEl) {
-  if (!containerEl) return;
-  const p = state.pricing;
-  const maxX = Math.max(20, p.targetSubs + 5);
-  const margin = Math.max(0.5, p.proPrice - p.varCost);
-  const breakEvenX = p.fixedCost / margin;
-
-  const w = 600;
-  const h = 260;
-  const padLeft = 45;
-  const padRight = 20;
-  const padTop = 20;
-  const padBottom = 35;
-  const chartW = w - padLeft - padRight;
-  const chartH = h - padTop - padBottom;
-
-  const maxRev = maxX * p.proPrice;
-  const maxCost = p.fixedCost + maxX * p.varCost;
-  const maxY = Math.ceil(Math.max(maxRev, maxCost) * 1.15 / 50) * 50;
-
-  const scaleX = (x) => padLeft + (x / maxX) * chartW;
-  const scaleY = (y) => padTop + chartH - (y / maxY) * chartH;
-
-  // Revenue line & area
-  const revPoints = [];
-  const costPoints = [];
-  for (let x = 0; x <= maxX; x += 1) {
-    const rx = scaleX(x);
-    const ry = scaleY(x * p.proPrice);
-    const cy = scaleY(p.fixedCost + x * p.varCost);
-    revPoints.push(`${rx.toFixed(1)},${ry.toFixed(1)}`);
-    costPoints.push(`${rx.toFixed(1)},${cy.toFixed(1)}`);
-  }
-
-  const revPoly = `${padLeft},${scaleY(0)} ` + revPoints.join(' ') + ` ${scaleX(maxX)},${scaleY(0)}`;
-  const beX = scaleX(breakEvenX);
-  const beY = scaleY(breakEvenX * p.proPrice);
-
-  const yTicks = [0, maxY / 2, maxY];
-  const xTicks = [0, Math.round(maxX / 2), maxX];
-
-  containerEl.innerHTML = `
-    <div class="relative w-full overflow-hidden select-none">
-      <svg viewBox="0 0 ${w} ${h}" class="w-full h-auto text-xs" style="max-height:260px;">
-        <defs>
-          <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#34d399" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="#34d399" stop-opacity="0.0"/>
-          </linearGradient>
-        </defs>
-
-        <!-- Grid Lines & Y Labels -->
-        ${yTicks.map(val => {
-          const yPos = scaleY(val);
-          return `
-            <line x1="${padLeft}" y1="${yPos}" x2="${w - padRight}" y2="${yPos}" stroke="#334155" stroke-dasharray="2 3" opacity="0.4"/>
-            <text x="${padLeft - 6}" y="${yPos + 4}" fill="#94a3b8" text-anchor="end" font-size="10" font-family="monospace">$${Math.round(val)}</text>
-          `;
-        }).join('')}
-
-        <!-- X Labels -->
-        ${xTicks.map(val => {
-          const xPos = scaleX(val);
-          return `
-            <line x1="${xPos}" y1="${padTop}" x2="${xPos}" y2="${padTop + chartH}" stroke="#334155" stroke-dasharray="2 3" opacity="0.2"/>
-            <text x="${xPos}" y="${h - 12}" fill="#94a3b8" text-anchor="middle" font-size="10" font-family="monospace">${val}</text>
-          `;
-        }).join('')}
-
-        <!-- Revenue Area & Stroke -->
-        <polygon points="${revPoly}" fill="url(#revGrad)" />
-        <polyline points="${revPoints.join(' ')}" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-
-        <!-- Cost Line (Dashed) -->
-        <polyline points="${costPoints.join(' ')}" fill="none" stroke="#f43f5e" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round"/>
-
-        <!-- Break-even intersection point -->
-        ${breakEvenX <= maxX ? `
-          <circle cx="${beX.toFixed(1)}" cy="${beY.toFixed(1)}" r="5" fill="#10b981" stroke="#ffffff" stroke-width="2" />
-          <text x="${beX + 8}" y="${beY - 8}" fill="#34d399" font-size="10" font-weight="bold" font-family="sans-serif">${isAr() ? `نقطة التعادل (${Math.ceil(breakEvenX)})` : `Break-Even (${Math.ceil(breakEvenX)})`}</text>
-        ` : ''}
-
-        <!-- Axis Lines -->
-        <line x1="${padLeft}" y1="${padTop + chartH}" x2="${w - padRight}" y2="${padTop + chartH}" stroke="#475569" stroke-width="1"/>
-        <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${padTop + chartH}" stroke="#475569" stroke-width="1"/>
-      </svg>
-      <div class="flex items-center justify-center gap-6 mt-2 text-xs">
-        <span class="inline-flex items-center gap-1.5 text-emerald-300">
-          <span class="w-3 h-0.5 bg-emerald-400"></span> ${isAr() ? 'الإيرادات ($)' : 'Revenue ($)'}
-        </span>
-        <span class="inline-flex items-center gap-1.5 text-rose-300">
-          <span class="w-3 h-0.5 bg-rose-500 border-b border-dashed"></span> ${isAr() ? 'إجمالي التكاليف ($)' : 'Total Costs ($)'}
-        </span>
-      </div>
-    </div>
-  `;
-}
-
-// =========================================================================
-// 6. VIEW RENDERERS
-// =========================================================================
-function filterItems() {
-  const q = state.searchQuery.toLowerCase().trim();
-  if (!q) {
-    return {
-      agents: state.agents,
-      tasks: state.tasks,
-      messages: state.liveMessages
-    };
-  }
-  return {
-    agents: state.agents.filter(a =>
-      a.name.toLowerCase().includes(q) ||
-      a.id.toLowerCase().includes(q) ||
-      (a.roleAr && a.roleAr.toLowerCase().includes(q)) ||
-      (a.roleEn && a.roleEn.toLowerCase().includes(q))
-    ),
-    tasks: state.tasks.filter(t =>
-      t.id.toLowerCase().includes(q) ||
-      (t.titleAr && t.titleAr.toLowerCase().includes(q)) ||
-      (t.titleEn && t.titleEn.toLowerCase().includes(q)) ||
-      t.ownerId.toLowerCase().includes(q)
-    ),
-    messages: state.liveMessages.filter(m =>
-      m.from.toLowerCase().includes(q) ||
-      m.to.toLowerCase().includes(q) ||
-      m.text.toLowerCase().includes(q)
-    )
-  };
-}
-
 function renderOverview() {
+  const workingCount = state.agents.filter((a) => a.status === 'working').length;
   const alerts = getActiveAlerts();
-  const completedHandoffs = state.handoffs.filter((h) => h.state === 'completed').length;
-  const workingCount = state.agents.filter((a) => a.status === 'working' || a.status === 'idle').length;
+  const tasksWithHandoff = state.tasks.filter((t) => t.handoff);
+  const completedTasks = state.tasks.filter((t) => t.state === 'completed' || t.rawStatus === 'done').length;
 
   return `
     ${renderCoordinationTower()}
@@ -1478,11 +1067,11 @@ function renderOverview() {
               <span>${isAr() ? 'افتح لوحة الحالة' : 'Open Status Board'}</span>
               <span>${isAr() ? '←' : '→'}</span>
             </button>
-            <button type="button" data-jump="pipeline" class="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-surface-900/90 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-cyan-400/60 hover:text-white transition">
-              <span>${isAr() ? 'بوابة الأمن وحجب الأسرار' : 'Edge Secret Redaction'}</span>
+            <button type="button" data-jump="tasks" class="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-surface-900/90 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-cyan-400/60 hover:text-white transition">
+              <span>${isAr() ? 'المهام والأدلة' : 'Tasks & Proofs'}</span>
             </button>
-            <button type="button" data-jump="blueprint" class="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-surface-900/90 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-emerald-400/60 hover:text-white transition">
-              <span>${isAr() ? 'الخطة والمالية' : 'Blueprint & ROI'}</span>
+            <button type="button" data-jump="handoffs" class="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-surface-900/90 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-emerald-400/60 hover:text-white transition">
+              <span>${isAr() ? 'سجل التسليمات' : 'Handoff Ledger'}</span>
             </button>
           </div>
         </div>
@@ -1490,33 +1079,33 @@ function renderOverview() {
         <div class="lg:col-span-5">
           <div class="rounded-2xl border border-slate-800 bg-surface-950/90 p-5 space-y-4">
             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span class="text-xs font-bold uppercase tracking-wider text-slate-400">${isAr() ? 'لقطة حية من مساحة العمل' : 'Live Snapshot'}</span>
+              <span class="text-xs font-bold uppercase tracking-wider text-slate-400">${isAr() ? 'مؤشرات المنظومة الحية' : 'Live Snapshot'}</span>
               <span class="font-mono text-[11px] text-emerald-400">PWA: ACTIVE</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div class="rounded-xl bg-surface-900 p-3.5 border border-slate-800">
-                <div class="text-[11px] text-slate-400">${isAr() ? 'الوكلاء النشطون' : 'Active Agents'}</div>
-                <div class="mt-1 text-2xl font-extrabold text-white">${workingCount}<span class="text-sm text-slate-500">/${state.agents.length}</span></div>
+                <div class="text-[11px] text-slate-400">${isAr() ? 'الوكلاء المسجلون' : 'Registered Agents'}</div>
+                <div class="mt-1 text-2xl font-extrabold text-white">${state.agents.length} <span class="text-xs text-slate-400">(${workingCount} نشط)</span></div>
               </div>
               <div class="rounded-xl bg-surface-900 p-3.5 border border-slate-800">
                 <div class="text-[11px] text-slate-400">${isAr() ? 'تنبيهات نشطة' : 'Active Alerts'}</div>
                 <div class="mt-1 text-2xl font-extrabold ${alerts.length ? 'text-rose-400' : 'text-emerald-400'}">${alerts.length}</div>
               </div>
               <div class="rounded-xl bg-surface-900 p-3.5 border border-slate-800">
-                <div class="text-[11px] text-slate-400">${isAr() ? 'تسليمات مكتملة' : 'Completed'}</div>
-                <div class="mt-1 text-2xl font-extrabold text-cyan-300">${completedHandoffs}</div>
+                <div class="text-[11px] text-slate-400">${isAr() ? 'إجمالي المهام' : 'Total Tasks'}</div>
+                <div class="mt-1 text-2xl font-extrabold text-cyan-300">${state.tasks.length}</div>
               </div>
               <div class="rounded-xl bg-surface-900 p-3.5 border border-slate-800">
-                <div class="text-[11px] text-slate-400">${isAr() ? 'نقطة التعادل (Pro)' : 'Break-Even (Pro)'}</div>
-                <div class="mt-1 text-2xl font-extrabold text-emerald-400">6 <span class="text-xs font-normal text-slate-400">${isAr() ? 'مشتركين' : 'subs'}</span></div>
+                <div class="text-[11px] text-slate-400">${isAr() ? 'إيصالات التسليم' : 'Handoff Receipts'}</div>
+                <div class="mt-1 text-2xl font-extrabold text-emerald-400">${tasksWithHandoff.length}</div>
               </div>
             </div>
             <div class="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-xs text-slate-300">
-              <div class="font-semibold text-emerald-300 mb-1">${isAr() ? 'دليل تسليم حقيقي مدمج: حزمة F-24' : 'Grounded Evidence: F-24 Bundle'}</div>
+              <div class="font-semibold text-emerald-300 mb-1">${isAr() ? 'تنسيق حي بين وكلاء نبض' : 'Live Nabd Coordination'}</div>
               <p class="text-[11px] text-slate-400 leading-relaxed">
                 ${isAr()
-                  ? 'تم ربط حزمة nabd-f24-evidence.zip (فرع audit/reliability • 9/9 بوابات Clean Gate • 13 اختبار Mutation) كدليل حي في قسم المهام.'
-                  : 'nabd-f24-evidence.zip (branch audit/reliability • 9/9 Clean Gate • 13 Mutation tests) attached in Tasks view.'}
+                  ? 'يتم قراءة الحالة مباشرة من agents-state.json مع التحقق الصارم في CI وتوثيق القرارات.'
+                  : 'Live state synchronized from agents-state.json with strict CI validation.'}
               </p>
             </div>
           </div>
@@ -1524,7 +1113,7 @@ function renderOverview() {
       </div>
     </section>
 
-    <!-- 4 Capabilities -->
+    <!-- Problems Solved -->
     <section class="grid md:grid-cols-2 gap-6 contain-opt">
       <div class="rounded-2xl glass-card p-6 space-y-4">
         <div class="flex items-center justify-between">
@@ -1548,23 +1137,20 @@ function renderOverview() {
 
       <div class="rounded-2xl glass-card p-6 space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold text-white">${isAr() ? 'القدرات الجوهرية وآلة الحالة' : 'Core Capabilities'}</h2>
+          <h2 class="text-lg font-bold text-white">${isAr() ? 'القواعد المعمارية الثابتة' : 'Fixed Architectural Principles'}</h2>
           <span class="rounded-lg bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300">${isAr() ? 'مع نبض الوكلاء' : 'With Nabd'}</span>
         </div>
         <div class="space-y-3 text-sm">
           ${[
-            ['board', isAr() ? '1. لوحة الحالة الخماسية (Status Board)' : '1. 5-State Status Board', isAr() ? 'working / idle / waiting_human / blocked / unresponsive تلقائيًا عند انقطاع النبض.' : '5 states with auto-unresponsive on TTL expiry.'],
-            ['tasks', isAr() ? '2. قائمة مهام مشتركة بالأدلة (Artifacts)' : '2. Shared Tasks with Artifacts', isAr() ? 'كل مهمة لها وكيل مالك وروابط أدلة موثّقة (PR / Commit / فحص).' : 'Every task binds an owner agent with verifiable proof.'],
-            ['handoffs', isAr() ? '3. سجل تسليم رباعي وكبح الحلقات' : '3. 4-State Handoff Ledger & Loop Guard', isAr() ? 'Sent → Received → Accepted → Completed مع كبح >5 تسليمات في 10 دقائق.' : 'Full lifecycle with loop freezing (>5 handoffs in 10 min).'],
-            ['pipeline', isAr() ? '4. بوابة استقبال وحجب الأسرار' : '4. Edge Ingestion & Secret Scrubbing', isAr() ? 'توقيع HMAC، فحص SPF/DKIM، منع التكرار، وحجب الأسرار بـ [REDACTED].' : 'HMAC, SPF/DKIM, idempotency, and [REDACTED] scrubbing.']
-          ].map(([jump, title, desc]) => `
-            <button type="button" data-jump="${jump}" class="w-full text-start rounded-xl bg-surface-950/70 border border-slate-800/80 hover:border-emerald-500/40 p-3.5 transition group">
-              <div class="flex items-center justify-between">
-                <span class="font-semibold text-emerald-300 text-xs">${title}</span>
-                <span class="text-xs text-slate-500 group-hover:text-emerald-300">${isAr() ? 'فتح ←' : 'Open →'}</span>
-              </div>
-              <p class="mt-1 text-xs text-slate-400 leading-relaxed">${desc}</p>
-            </button>
+            [isAr() ? 'برج التنسيق — صاحب الخطوة التالية' : 'Coordination Tower', isAr() ? 'إجابة فورية خلال ثوانٍ عن صاحب التدخل التالي (معاد ثم معلق تصاعدياً ثم مقبول).' : 'Immediate visibility into who owns the next action.'],
+            [isAr() ? 'الأمانة المعرفية (Epistemic Transparency)' : 'Epistemic Transparency', isAr() ? 'فصل تواريخ الانتظار وظهور الوكلاء، وإشعار صريح بالنسخة المخزنة محلياً عند عدم الاتصال.' : 'Clear disambiguation between cache, wait age, and heartbeat.'],
+            [isAr() ? 'صفر أسرار ومستودع عام' : 'Zero Secrets in State', isAr() ? 'فحص آلي في CI لمنع إدراج التوكنات أو مفاتيح API في ملف الحالة.' : 'Strict automated secret scanning protects public state.'],
+            [isAr() ? 'الأدلة الموثّقة والإيصالات' : 'Verified Evidence Receipts', isAr() ? 'لا تسليم بلا دليل: كل مهمة تُربط بـ PR وفحوصات واضحة قبل اعتمادها.' : 'No handoff without verified PR or build artifacts.']
+          ].map(([title, desc]) => `
+            <div class="rounded-xl bg-surface-950/70 border border-slate-800/80 p-3.5">
+              <div class="font-semibold text-emerald-300 text-xs mb-1">✓ ${title}</div>
+              <p class="text-xs text-slate-400 leading-relaxed">${desc}</p>
+            </div>
           `).join('')}
         </div>
       </div>
@@ -1574,7 +1160,7 @@ function renderOverview() {
 
 function renderBoard() {
   const { agents } = filterItems();
-  const filters = ['all', 'working', 'idle', 'waiting_human', 'blocked', 'unresponsive'];
+  const filters = ['all', 'working', 'idle', 'waiting', 'waiting_human', 'blocked', 'unresponsive'];
   const filtered = state.boardFilter === 'all'
     ? agents
     : agents.filter((a) => a.status === state.boardFilter);
@@ -1582,16 +1168,8 @@ function renderBoard() {
   return `
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-white">${isAr() ? 'لوحة الحالة الخماسية (Status Board)' : '5-State Agent Status Board'}</h1>
-        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'راقب نبض كل وكيل، اختبر انقطاع المهلة، أو أضف وكيلًا جديدًا.' : 'Monitor heartbeats, test TTL watchdog, or register new agents.'}</p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <button id="simulateTtlBtn" type="button" class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/20 transition">
-          ${isAr() ? '⏱ محاكاة انقطاع نبضة (+35m)' : '⏱ Simulate TTL Expiry (+35m)'}
-        </button>
-        <button id="addAgentBtn" type="button" class="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
-          ${isAr() ? '+ إضافة وكيل' : '+ Add Agent'}
-        </button>
+        <h1 class="text-2xl font-bold text-white">${isAr() ? 'لوحة حالة الوكلاء (Agent Status Board)' : 'Agent Status Board'}</h1>
+        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'متابعة النبضات، المهام الحالية، ووسائل التنسيق بين الوكلاء.' : 'Monitor heartbeats, active tasks, and agent channels.'}</p>
       </div>
     </div>
 
@@ -1632,7 +1210,7 @@ function renderBoard() {
             <div class="space-y-2.5 text-xs">
               <div class="flex items-center justify-between rounded-xl bg-surface-950/70 px-3 py-2 border border-slate-800/80">
                 <span class="text-slate-400">${isAr() ? 'المهمة النشطة' : 'Active Task'}</span>
-                <span class="font-mono font-semibold text-cyan-300">${escapeHtml(a.activeTaskId || '—')}</span>
+                <span class="font-mono font-semibold text-cyan-300 truncate max-w-[200px]">${escapeHtml(a.activeTaskId || '—')}</span>
               </div>
               <div>
                 <div class="flex justify-between text-[11px] mb-1">
@@ -1645,15 +1223,11 @@ function renderBoard() {
               </div>
             </div>
 
-            <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80">
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-xs">
+              <span class="font-mono text-[11px] text-slate-400">ID: ${escapeHtml(a.id)}</span>
               <button type="button" data-heartbeat="${escapeHtml(a.id)}" class="rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/25 transition">
-                ♥ ${isAr() ? 'إرسال نبضة الآن' : 'Send Heartbeat'}
+                ♥ ${isAr() ? 'تحديث النبضة الآن' : 'Send Heartbeat'}
               </button>
-              <select data-agent-state="${escapeHtml(a.id)}" class="rounded-lg bg-surface-950 border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-200 focus:border-emerald-400 focus:outline-none">
-                ${['working', 'idle', 'waiting_human', 'blocked', 'unresponsive'].map((st) => `
-                  <option value="${st}" ${a.status === st ? 'selected' : ''}>${escapeHtml(t('states.' + st))}</option>
-                `).join('')}
-              </select>
             </div>
           </div>
         `;
@@ -1664,21 +1238,50 @@ function renderBoard() {
 
 function renderTasks() {
   const { tasks } = filterItems();
+  const owners = ['all', ...new Set(state.tasks.map((t) => t.ownerId).filter(Boolean))];
+  const statuses = ['all', 'todo', 'in_progress', 'waiting_review', 'blocked', 'done'];
+
   return `
     ${renderCoordinationTower()}
 
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-6">
       <div>
         <h1 class="text-2xl font-bold text-white">${isAr() ? 'قائمة المهام والأدلة الموثّقة' : 'Shared Tasks & Artifacts'}</h1>
-        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'لا تسليم بلا دليل: استعرض حزم الاختبارات أو PRs المرتبطة والتسلسل المتاح.' : 'No handoff without proof: inspect verified test bundles & available sequence.'}</p>
+        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'كل مهمة مربوطة بمالكها، أدلة فحصها، وإيصال التسليم إن وجد.' : 'Shared tasks with owners, verified artifacts, and handoff receipts.'}</p>
       </div>
-      <button id="addTaskBtn" type="button" class="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
-        ${isAr() ? '+ إضافة مهمة' : '+ New Task'}
-      </button>
+    </div>
+
+    <!-- Filters: Owner & Status -->
+    <div class="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface-900/90 border border-slate-800 text-xs">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-slate-400 font-semibold">${isAr() ? 'فلترة حسب الوكيل:' : 'Filter Owner:'}</span>
+        ${owners.map((o) => `
+          <button type="button" data-task-filter-owner="${o}" class="rounded-lg px-2.5 py-1 transition ${
+            state.taskFilterOwner === o ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 font-bold' : 'text-slate-400 hover:text-white'
+          }">
+            ${o === 'all' ? (isAr() ? 'الكل' : 'All') : escapeHtml(o)}
+          </button>
+        `).join('')}
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-slate-400 font-semibold">${isAr() ? 'الحالة:' : 'Status:'}</span>
+        ${statuses.map((s) => `
+          <button type="button" data-task-filter-status="${s}" class="rounded-lg px-2.5 py-1 transition ${
+            state.taskFilterStatus === s ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 font-bold' : 'text-slate-400 hover:text-white'
+          }">
+            ${s === 'all' ? (isAr() ? 'الكل' : 'All') : escapeHtml(t('taskStates.' + s))}
+          </button>
+        `).join('')}
+      </div>
     </div>
 
     <div class="space-y-4 contain-opt">
-      ${tasks.map((task) => {
+      ${tasks.length === 0 ? `
+        <div class="rounded-2xl border border-slate-800 bg-surface-900/90 p-8 text-center space-y-2">
+          <h3 class="text-sm font-bold text-slate-300">${isAr() ? 'لا توجد مهام تطابق الفلترة الحالية' : 'No tasks match current filter'}</h3>
+        </div>
+      ` : tasks.map((task) => {
         const owner = state.agents.find((a) => a.id === task.ownerId);
         return `
           <div class="rounded-2xl glass-card p-5 space-y-4">
@@ -1721,50 +1324,47 @@ function renderTasks() {
                     <span>📎 ${escapeHtml(art.label)}</span>
                     <span class="rounded bg-surface-950 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">${escapeHtml(art.checks)}</span>
                   </button>
-                `).join('') : `<span class="text-[11px] text-slate-500">${isAr() ? 'لا توجد أدلة بعد' : 'No artifacts'}</span>`}
+                `).join('') : `<span class="text-[11px] text-slate-400">${isAr() ? 'لا توجد أدلة بعد' : 'No artifacts'}</span>`}
               </div>
             </div>
           </div>
         `;
-      }).join('')}
+      })}
     </div>
   `;
 }
 
 function renderHandoffs() {
-  const stages = ['sent', 'received', 'accepted', 'completed'];
   const { messages } = filterItems();
+  const tasksWithHandoff = (state.tasks || []).filter((t) => t && t.handoff);
 
   return `
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-white">${isAr() ? 'سجل التسليمات الرباعي وكبح الحلقات' : '4-State Handoff Ledger'}</h1>
-        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'Sent ← Received ← Accepted ← Completed، مع كبح الحلقات (>5 في 10 دقائق).' : 'Lifecycle tracking with loop freezing.'}</p>
+        <h1 class="text-2xl font-bold text-white">${isAr() ? 'سجل إيصالات التسليم غير المتزامن' : 'Async Handoff Ledger'}</h1>
+        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'إيصالات التسليم الموثقة بين الوكلاء، متطلبات الخطوة التالية، وسجل التبادلات التاريخية.' : 'Documented cross-agent handoff receipts, next step requirements, and history.'}</p>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <button id="simLoopGuardBtn" type="button" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition">
-          ${isAr() ? '⚡ اختبار Loop Guard' : '⚡ Test Loop Guard'}
-        </button>
-        <button id="newHandoffBtn" type="button" class="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
-          ${isAr() ? '+ تسجيل تسليم' : '+ New Handoff'}
-        </button>
+      <div class="flex items-center gap-2">
+        <span class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-200">
+          ${isAr() ? `إجمالي الإيصالات: ${tasksWithHandoff.length}` : `Total Receipts: ${tasksWithHandoff.length}`}
+        </span>
       </div>
     </div>
 
-    <!-- Live Messages -->
+    <!-- Live Messages Stream -->
     ${messages && messages.length ? `
       <div class="rounded-2xl glass-card border-cyan-500/30 p-5 space-y-3 contain-opt">
         <div class="flex items-center justify-between">
-          <h2 class="text-sm font-bold text-cyan-200">${isAr() ? 'سجل الرسائل الحية (messages)' : 'Live Agent Messages'}</h2>
+          <h2 class="text-sm font-bold text-cyan-200">${isAr() ? 'سجل رسائل التنسيق الحية (messages)' : 'Live Agent Messages'}</h2>
           <span class="font-mono text-[11px] text-cyan-300">${messages.length}</span>
         </div>
-        <div class="space-y-2.5">
+        <div class="space-y-2.5 max-h-72 overflow-y-auto custom-scroll pe-1">
           ${messages.map((m) => `
             <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-3.5 text-xs space-y-1.5">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
                   <span class="font-bold text-emerald-300">${escapeHtml(m.from)}</span>
-                  <span class="text-slate-500">${isAr() ? '←' : '→'}</span>
+                  <span class="text-slate-400">${isAr() ? '←' : '→'}</span>
                   <span class="font-bold text-cyan-300">${escapeHtml(m.to)}</span>
                   ${m.taskId && m.taskId !== '—' ? `<span class="rounded bg-surface-900 border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">${escapeHtml(m.taskId)}</span>` : ''}
                 </div>
@@ -1777,325 +1377,107 @@ function renderHandoffs() {
       </div>
     ` : ''}
 
-    <!-- Handoff Cards -->
+    <!-- Actual Task Handoff Receipts -->
     <div class="space-y-4 contain-opt">
-      ${state.handoffs.map((h) => {
-        const idx = stages.indexOf(h.state);
-        const isStalled = (h.state === 'sent' || h.state === 'received') && h.minutesInState > h.slaMinutes;
-        const nextState = idx < stages.length - 1 ? stages[idx + 1] : null;
+      ${tasksWithHandoff.length === 0 ? `
+        <div class="rounded-2xl border border-slate-800 bg-surface-900/90 p-8 text-center space-y-2">
+          <div class="text-2xl">🤝</div>
+          <h3 class="text-sm font-bold text-slate-300">${isAr() ? 'لا توجد إيصالات تسليم مسجلة حالياً' : 'No handoff receipts found'}</h3>
+          <p class="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            ${isAr() ? 'عندما يسجّل وكيل إيصال تسليم في حقل handoff داخل أي مهمة، سيظهر الإيصال وتفاصيل الخطوة التالية هنا.' : 'When an agent records a handoff receipt on a task, it will appear here.'}
+          </p>
+        </div>
+      ` : tasksWithHandoff.map((t) => {
+        const h = t.handoff;
+        const fromAgent = state.agents.find((a) => a.id === h.from) || { id: h.from, name: h.from };
+        const toAgent = state.agents.find((a) => a.id === h.to) || { id: h.to, name: h.to };
+        const isReturned = h.status === 'returned';
+        const isPending = h.status === 'pending';
+        const borderCls = isReturned ? 'border-rose-500/50 bg-rose-950/20' : isPending ? 'border-amber-500/40 bg-amber-950/15' : 'border-emerald-500/40 bg-emerald-950/15';
+        const badgeCls = isReturned ? 'border-rose-500/40 bg-rose-500/15 text-rose-200' : isPending ? 'border-amber-500/40 bg-amber-500/15 text-amber-200' : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
+        const historyList = Array.isArray(h.history) ? h.history : [];
+
         return `
-          <div class="rounded-2xl glass-card p-5 space-y-4 ${isStalled ? 'border-rose-500/60 bg-rose-950/15' : ''}">
+          <div class="rounded-2xl glass-card border ${borderCls} p-5 space-y-4">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="font-mono text-xs font-bold text-emerald-300">${escapeHtml(h.id)}</span>
-                <span class="rounded-md bg-surface-950 px-2 py-0.5 font-mono text-[11px] text-cyan-300 border border-slate-800">${escapeHtml(h.taskId)}</span>
-                <span class="text-xs text-slate-200 font-semibold">${escapeHtml(h.fromId)} ${isAr() ? '←' : '→'} ${escapeHtml(h.toId)}</span>
-                ${isStalled ? `<span class="rounded-full bg-rose-500/20 border border-rose-500/40 px-2.5 py-0.5 text-[11px] font-bold text-rose-300">⚠ ${isAr() ? `معلّق (${h.minutesInState}m)` : `Stalled (${h.minutesInState}m)`}</span>` : ''}
+                <span class="rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${badgeCls}">${h.status.toUpperCase()}</span>
+                <span class="rounded-md bg-surface-950 px-2 py-0.5 font-mono text-xs font-bold text-cyan-300 border border-slate-800">${escapeHtml(t.id)}</span>
+                <span class="text-sm font-bold text-white">${escapeHtml(isAr() ? (t.titleAr || t.title) : (t.titleEn || t.title))}</span>
               </div>
-              <span class="font-mono text-[11px] text-slate-400">idempotency: ${escapeHtml(h.idempotencyKey)}</span>
+              <span class="font-mono text-[11px] text-slate-400">${escapeHtml(h.at || '')}</span>
             </div>
 
-            <p class="text-xs text-slate-300 leading-relaxed">${escapeHtml(isAr() ? h.summaryAr : h.summaryEn)}</p>
+            <div class="grid sm:grid-cols-2 gap-2.5 text-xs">
+              <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-2.5">
+                <span class="text-slate-400 text-[10px]">${isAr() ? 'المرسل (From):' : 'From:'}</span>
+                <strong class="block text-slate-200 font-semibold mt-0.5">${escapeHtml(fromAgent.name)}</strong>
+              </div>
+              <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-2.5">
+                <span class="text-slate-400 text-[10px]">${isAr() ? 'المستلم صاحب الخطوة (To):' : 'To:'}</span>
+                <strong class="block text-slate-200 font-semibold mt-0.5">${escapeHtml(toAgent.name)}</strong>
+              </div>
+            </div>
 
-            <div class="grid grid-cols-4 gap-1.5">
-              ${stages.map((st, sIdx) => `
-                <div class="space-y-1">
-                  <div class="h-1.5 rounded-full ${sIdx <= idx ? (isStalled && sIdx === idx ? 'bg-rose-500' : 'bg-emerald-400') : 'bg-slate-800'}"></div>
-                  <div class="text-[10px] ${sIdx <= idx ? 'text-slate-200 font-semibold' : 'text-slate-500'}">${escapeHtml(t('handoffStates.' + st))}</div>
+            <div class="space-y-2 text-xs">
+              <div class="text-slate-300">
+                <strong class="text-white">${isAr() ? 'ملخص الإنجاز:' : 'Summary:'}</strong> ${escapeHtml(h.summary)}
+              </div>
+              <div class="rounded-xl bg-surface-950 border border-slate-800 p-3 text-emerald-200">
+                <strong class="text-emerald-400">${isAr() ? 'الخطوة التالية المطلوبة:' : 'Next Step:'}</strong> ${escapeHtml(h.next_step)}
+              </div>
+            </div>
+
+            ${h.decision ? `
+              <div class="rounded-xl border border-slate-700 bg-surface-950 p-3 space-y-1 text-xs">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                  <span>Decision by: <strong class="text-slate-200">${escapeHtml(h.decision.by || '—')}</strong></span>
+                  <span>${escapeHtml(h.decision.at || '—')}</span>
                 </div>
-              `).join('')}
-            </div>
+                ${h.decision.reason ? `<div class="text-rose-200 mt-1"><strong>${isAr() ? 'السبب:' : 'Reason:'}</strong> ${escapeHtml(h.decision.reason)}</div>` : ''}
+              </div>
+            ` : ''}
 
-            <div class="flex items-center justify-between pt-2 border-t border-slate-800/80">
-              <span class="text-[11px] text-slate-400">${isAr() ? `مهلة الاستلام: ${h.slaMinutes}m` : `SLA: ${h.slaMinutes}m`}</span>
-              ${nextState ? `
-                <button type="button" data-advance-handoff="${escapeHtml(h.id)}" class="rounded-lg bg-emerald-500/15 border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 transition">
-                  ${isAr() ? `ترقية إلى: ${t('handoffStates.' + nextState)}` : `Advance to: ${t('handoffStates.' + nextState)}`}
-                </button>
-              ` : `<span class="text-xs font-semibold text-emerald-400">✓ ${isAr() ? 'مكتمل وموثّق' : 'Verified'}</span>`}
+            ${historyList.length > 0 ? `
+              <div class="pt-3 border-t border-slate-800/80 space-y-2">
+                <div class="text-[11px] font-bold text-slate-400">${isAr() ? `سجل التبادلات السابقة (${historyList.length})` : `Handoff History (${historyList.length})`}</div>
+                <div class="space-y-1.5 max-h-40 overflow-y-auto custom-scroll">
+                  ${historyList.map((hist) => `
+                    <div class="rounded-lg bg-surface-950/60 border border-slate-800/80 p-2 text-[11px] flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <span class="font-mono font-semibold ${hist.status === 'returned' ? 'text-rose-400' : 'text-slate-300'}">[${escapeHtml(hist.status)}]</span>
+                        <span class="text-slate-400">${escapeHtml(hist.summary || hist.reason || '—')}</span>
+                      </div>
+                      <span class="font-mono text-[10px] text-slate-400">${escapeHtml(hist.at || '')}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
+              <div>
+                ${sanitizeUrl(h.evidence_url) ? `
+                  <a href="${escapeHtml(sanitizeUrl(h.evidence_url))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+                    <span>📎 ${isAr() ? 'عرض الدليل' : 'Inspect Evidence'}</span>
+                    <span class="text-[10px]">↗</span>
+                  </a>
+                ` : `<span class="text-[11px] text-slate-400">${isAr() ? 'لا يوجد رابط دليل' : 'No evidence link'}</span>`}
+              </div>
+              <button type="button" data-open-task-details="${escapeHtml(t.id)}" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-surface-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-emerald-400 hover:text-white transition">
+                <span>${isAr() ? 'التفاصيل والتسلسل' : 'Details'}</span>
+                <span>${isAr() ? '←' : '→'}</span>
+              </button>
             </div>
           </div>
         `;
-      }).join('')}
-    </div>
-  `;
-}
-
-function renderPipeline() {
-  const defaultGithub = JSON.stringify({
-    schema_version: '1.0',
-    agent_id: 'muse',
-    updated_at: '2026-11-19T21:00:00Z',
-    status: 'working',
-    ttl_minutes: 60,
-    task: { id: 'sec-phase1', state: 'working' },
-    handoff: {
-      to_agent: 'site-agent',
-      idempotency_key: 'key-9x882',
-      summary: 'اختبار حجب سر: sk-live-9876543210abcdef123456 ومفتاح ghp_9xK2mP7qR4sT8vW1yZ3bN5cM'
-    }
-  }, null, 2);
-
-  const defaultEmail = `To: agent_9x4k2m@inbound.nabdagents.dev
-Subject: [task:sec-phase1][status:done][to:@muse]
-SPF: PASS | DKIM: PASS
-Message-ID: mail-msg-99102
-
-Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c`;
-
-  const payloadValue = state.pipelineMode === 'github' ? defaultGithub : defaultEmail;
-
-  return `
-    <div class="space-y-6">
-      <div>
-        <h1 class="text-2xl font-bold text-white">${isAr() ? 'بوابة الاستقبال والأمن الدفاعي' : 'Defensive Edge Ingestion Pipeline'}</h1>
-        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'اختبر بوابات التحقق: التوقيع، عدم التكرار، حجب الأسرار، وآلة الحالة.' : 'Test verification gates: auth, idempotency, secret scrubbing, and state guard.'}</p>
-      </div>
-
-      <div class="grid lg:grid-cols-12 gap-6">
-        <div class="lg:col-span-7 rounded-2xl glass-card p-5 space-y-4">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="flex gap-2">
-              <button type="button" data-pipe-mode="github" class="rounded-lg px-3 py-1.5 text-xs font-semibold border transition ${state.pipelineMode === 'github' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-slate-700 bg-surface-950 text-slate-400'}">
-                GitHub Payload
-              </button>
-              <button type="button" data-pipe-mode="email" class="rounded-lg px-3 py-1.5 text-xs font-semibold border transition ${state.pipelineMode === 'email' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-slate-700 bg-surface-950 text-slate-400'}">
-                Email Payload
-              </button>
-            </div>
-            <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-              <input id="pipeValidSig" type="checkbox" checked class="rounded border-slate-600 bg-surface-950 text-emerald-500" />
-              <span>Valid Signature (HMAC/SPF)</span>
-            </label>
-          </div>
-
-          <textarea id="pipelineInput" rows="12" dir="ltr" class="w-full rounded-xl bg-surface-950 border border-slate-800 p-3.5 font-mono text-xs text-emerald-200 focus:border-emerald-400 focus:outline-none custom-scroll">${escapeHtml(payloadValue)}</textarea>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <button id="runPipelineBtn" type="button" class="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
-              ${isAr() ? '▶ تشغيل الفحص والتنقيح' : '▶ Run Edge Ingestion'}
-            </button>
-            <button id="copyPayloadBtn" type="button" class="rounded-xl border border-slate-700 bg-surface-900 px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-white transition">
-              ${isAr() ? 'نسخ القالب' : 'Copy Template'}
-            </button>
-          </div>
-        </div>
-
-        <div class="lg:col-span-5 space-y-4">
-          <div id="pipelineResultBox" class="rounded-2xl glass-card p-5 space-y-3">
-            <h3 class="text-sm font-bold text-white">${isAr() ? 'نتيجة الفحص الفوري' : 'Ingestion Verdict'}</h3>
-            <p class="text-xs text-slate-400">${isAr() ? 'اضغط «تشغيل الفحص» لاختبار حجب الأسرار التلقائي.' : 'Click Run Edge Ingestion to test automatic scrubbing.'}</p>
-          </div>
-
-          <div class="rounded-2xl glass-card p-5 space-y-3 contain-opt">
-            <div class="flex items-center justify-between">
-              <h3 class="text-sm font-bold text-white">${isAr() ? 'سجل التدقيق (audit_events)' : 'Audit Events'}</h3>
-              <span class="font-mono text-[10px] text-slate-400">${state.auditEvents.length} events</span>
-            </div>
-            <div class="space-y-2 max-h-56 overflow-y-auto custom-scroll pe-1">
-              ${state.auditEvents.slice(0, 6).map((ev) => `
-                <div class="rounded-lg bg-surface-950/80 border border-slate-800 p-2.5 text-[11px]">
-                  <div class="flex items-center justify-between font-mono text-[10px] text-slate-400 mb-1">
-                    <span class="${ev.type === 'alert' ? 'text-rose-400' : ev.type === 'redact' ? 'text-amber-300' : 'text-emerald-400'}">${escapeHtml(ev.actor)}</span>
-                    <span>${escapeHtml(ev.time)}</span>
-                  </div>
-                  <div class="text-slate-300 leading-relaxed">${escapeHtml(isAr() ? ev.msgAr : ev.msgEn)}</div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderBlueprint() {
-  const p = state.pricing;
-  const margin = Math.max(0.5, p.proPrice - p.varCost);
-  const breakEvenExact = p.fixedCost / margin;
-  const breakEvenSubs = Math.ceil(breakEvenExact);
-  const monthlyProfit = (p.targetSubs * margin) - p.fixedCost;
-
-  const tabs = [
-    ['architecture', isAr() ? 'المعمارية وA2A' : 'Architecture & A2A'],
-    ['pricing', isAr() ? 'الميزانية ونقطة التعادل' : 'Pricing & Break-Even'],
-    ['competition', isAr() ? 'المنافسة 2026' : '2026 Landscape'],
-    ['roadmap', isAr() ? 'خارطة الطريق' : 'Roadmap']
-  ];
-
-  let tabBody = '';
-  if (state.blueprintTab === 'architecture') {
-    tabBody = `
-      <div class="grid lg:grid-cols-2 gap-6 contain-opt">
-        <div class="rounded-2xl glass-card p-5 space-y-3">
-          <h3 class="text-base font-bold text-white">${isAr() ? 'نموذج البيانات المتوافق مع A2A' : 'A2A-Aligned Data Model'}</h3>
-          <div class="space-y-2 text-xs">
-            ${[
-              ['agents-state.json', 'Shared State Hub', isAr() ? 'مصدر الحقيقة الموحد: الوكلاء، الحالات، المهام، الرسائل، وتوقيت النبضات.' : 'Single source of truth: agents, states, tasks, messages, and heartbeats.'],
-              ['agents', '↔ AgentCard', isAr() ? 'id فريد، الاسم، الدور، الحالة، TTL، وطريقة الربط بدون أسرار.' : 'Unique id, name, role, status, TTL, and secret-free config.'],
-              ['tasks', '↔ Tasks & Evidence', isAr() ? 'معرّف المهمة، المالك، الحالة، وحقل artifacts لربط PRs ونتائج الفحوصات.' : 'Task id, owner, status, and verifiable artifacts links.'],
-              ['messages', '↔ Async Ledger', isAr() ? 'رسائل وتوجيهات تسلسلية لحفظ سياق التنسيق والقرارات.' : 'Sequential async messaging preserving context and directives.']
-            ].map(([tbl, map, desc]) => `
-              <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-3">
-                <div class="flex items-center justify-between mb-1">
-                  <span class="font-mono font-bold text-emerald-300">${tbl}</span>
-                  <span class="font-mono text-[10px] text-cyan-300">${map}</span>
-                </div>
-                <p class="text-slate-400 leading-relaxed">${desc}</p>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <div class="rounded-2xl glass-card p-5 space-y-4">
-          <h3 class="text-base font-bold text-white">${isAr() ? 'المكدس التقني فائق الخفة' : 'Ultra-Lightweight Tech Stack'}</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-            <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-3">
-              <div class="text-slate-400 text-[10px]">Frontend</div>
-              <div class="font-bold text-white mt-0.5">Vanilla ES Modules</div>
-              <div class="text-[11px] text-emerald-400">Zero-Blocking &lt;15KB</div>
-            </div>
-            <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-3">
-              <div class="text-slate-400 text-[10px]">Hosting & PWA</div>
-              <div class="font-bold text-white mt-0.5">GitHub Pages + SW</div>
-              <div class="text-[11px] text-cyan-400">Offline Instant Paint</div>
-            </div>
-            <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-3">
-              <div class="text-slate-400 text-[10px]">Validation (CI)</div>
-              <div class="font-bold text-white mt-0.5">Node 22 GitHub Action</div>
-              <div class="text-[11px] text-amber-300">Fast 9s Gates</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  } else if (state.blueprintTab === 'pricing') {
-    tabBody = `
-      <div class="grid lg:grid-cols-12 gap-6 contain-opt">
-        <div class="lg:col-span-5 rounded-2xl glass-card p-5 space-y-5">
-          <div>
-            <h3 class="text-base font-bold text-white">${isAr() ? 'حاسبة نقطة التعادل التفاعلية' : 'Break-Even Calculator'}</h3>
-            <p class="text-xs text-slate-400 mt-1">${isAr() ? 'التكاليف الثابتة $50/شهر، باقة Pro $10، تكلفة متغيرة $1.50.' : 'Fixed $50/mo, $10 Pro, $1.50 variable.'}</p>
-          </div>
-
-          <div class="space-y-4 text-xs">
-            <div>
-              <div class="flex justify-between mb-1">
-                <span class="text-slate-300">${isAr() ? 'التكاليف الثابتة الشهرية' : 'Monthly Fixed Costs'}</span>
-                <span class="font-mono font-bold text-white">$${p.fixedCost}</span>
-              </div>
-              <input id="slFixed" type="range" min="15" max="150" step="5" value="${p.fixedCost}" class="w-full accent-emerald-500" />
-            </div>
-            <div>
-              <div class="flex justify-between mb-1">
-                <span class="text-slate-300">${isAr() ? 'سعر باقة Pro الشهري' : 'Pro Plan Price'}</span>
-                <span class="font-mono font-bold text-emerald-300">$${p.proPrice}</span>
-              </div>
-              <input id="slPrice" type="range" min="5" max="30" step="1" value="${p.proPrice}" class="w-full accent-emerald-500" />
-            </div>
-            <div>
-              <div class="flex justify-between mb-1">
-                <span class="text-slate-300">${isAr() ? 'عدد مشتركي Pro المستهدف' : 'Target Subscribers'}</span>
-                <span class="font-mono font-bold text-cyan-300">${p.targetSubs}</span>
-              </div>
-              <input id="slSubs" type="range" min="1" max="100" step="1" value="${p.targetSubs}" class="w-full accent-cyan-400" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3 pt-2">
-            <div class="rounded-xl bg-surface-950 border border-emerald-500/30 p-3.5">
-              <div class="text-[11px] text-slate-400">${isAr() ? 'نقطة التعادل' : 'Break-Even'}</div>
-              <div class="mt-1 text-2xl font-extrabold text-emerald-400">${breakEvenSubs} <span class="text-xs font-normal text-slate-400">subs</span></div>
-            </div>
-            <div class="rounded-xl bg-surface-950 border border-slate-800 p-3.5">
-              <div class="text-[11px] text-slate-400">${isAr() ? 'صافي الربح المتوقع' : 'Estimated Net'}</div>
-              <div class="mt-1 text-2xl font-extrabold ${monthlyProfit >= 0 ? 'text-cyan-300' : 'text-rose-400'}">${monthlyProfit >= 0 ? '+' : ''}$${monthlyProfit.toFixed(0)}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="lg:col-span-7 space-y-4">
-          <div class="rounded-2xl glass-card p-5">
-            <h3 class="text-sm font-bold text-white mb-2">${isAr() ? 'منحنى الإيرادات مقابل التكاليف (SVG أصلي فوري)' : 'Revenue vs. Cost Curve (Native SVG)'}</h3>
-            <div id="svgChartContainer"></div>
-          </div>
-        </div>
-      </div>
-    `;
-  } else if (state.blueprintTab === 'competition') {
-    tabBody = `
-      <div class="rounded-2xl glass-card p-5 overflow-x-auto contain-opt">
-        <h3 class="text-base font-bold text-white mb-4">${isAr() ? 'تحليل المنافسة والتميّز 2026' : '2026 Competitive Landscape'}</h3>
-        <table class="w-full text-xs text-start border-collapse">
-          <thead>
-            <tr class="border-b border-slate-800 text-slate-400">
-              <th class="py-2.5 pe-4 text-start">${isAr() ? 'المنافس' : 'Competitor'}</th>
-              <th class="py-2.5 pe-4 text-start">${isAr() ? 'التركيز' : 'Focus'}</th>
-              <th class="py-2.5 text-start">${isAr() ? 'لماذا نبض الوكلاء؟' : 'Why Nabd?'}</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800/70">
-            <tr>
-              <td class="py-3 pe-4 font-bold text-white">GitHub Agent HQ</td>
-              <td class="py-3 pe-4 text-slate-300">${isAr() ? 'وكلاء كود داخل GitHub فقط.' : 'GitHub coding agents only.'}</td>
-              <td class="py-3 text-slate-400">${isAr() ? 'لا يربط وكلاء البريد أو السكربتات الخارجية.' : 'Ignores email & multi-platform agents.'}</td>
-            </tr>
-            <tr>
-              <td class="py-3 pe-4 font-bold text-white">LangSmith / Langfuse</td>
-              <td class="py-3 pe-4 text-slate-300">${isAr() ? 'مراقبة تقنية وتتبع (Traces).' : 'LLM observability & tracing.'}</td>
-              <td class="py-3 text-slate-400">${isAr() ? 'أدوات هندسية وليست لوحة مهام وتسليمات يومية.' : 'Engineering telemetry, not a daily handoff board.'}</td>
-            </tr>
-            <tr>
-              <td class="py-3 pe-4 font-bold text-white">Linear / Slack</td>
-              <td class="py-3 pe-4 text-slate-300">${isAr() ? 'أدوات تواصل مصممة للبشر.' : 'Human-first tools.'}</td>
-              <td class="py-3 text-slate-400">${isAr() ? 'الوكيل فيها ضيف ثانوي بلا فحص نبض أصلي.' : 'Agents are second-class guests without native heartbeat.'}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    `;
-  } else {
-    tabBody = `
-      <div class="grid md:grid-cols-4 gap-3 text-xs contain-opt">
-        ${[
-          ['0', isAr() ? 'التأسيس' : 'Phase 0: Setup', isAr() ? 'مستودع عام، لوحة حية، تحقق CI، ترخيص MIT، وقرار ADR-001 (مكتمل).' : 'Repo, Live Board, CI, MIT License, ADR-001 (Done).'],
-          ['1', isAr() ? 'إثبات الحلقة' : 'Phase 1: Proof', isAr() ? 'تشغيل أسبوع كامل بوكيلين (Muse وموقعي) بلا تدخل يدوي.' : '1 week dogfooding with 2 agents with zero manual intervention.'],
-          ['2', isAr() ? 'المهام والتسليمات' : 'Phase 2: Leases', isAr() ? 'حجز المهام لمنع التعارض، تسليمات بالأدلة، وانضمام وكيل البرمجة Nabd.' : 'Task leases, evidence-based handoffs, and Nabd agent integration.'],
-          ['3', isAr() ? 'المنتج ومساحات العمل' : 'Phase 3: Product', isAr() ? 'مساحات عمل متعددة، API + CLI، والدفع بـ Stripe.' : 'Multi-workspace, API/CLI, and Stripe billing.']
-        ].map(([ph, title, desc]) => `
-          <div class="rounded-2xl glass-card p-4 space-y-2">
-            <span class="rounded bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 font-mono text-[11px] font-bold text-emerald-300">P${ph}</span>
-            <h4 class="font-bold text-white text-sm">${title}</h4>
-            <p class="text-slate-400 leading-relaxed">${desc}</p>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }
-
-  return `
-    <div class="space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-bold text-white">${isAr() ? 'المخطط التنفيذي وخارطة الطريق' : 'Product Blueprint & Economics'}</h1>
-          <p class="text-xs text-slate-400 mt-1">${isAr() ? 'خطة نبض الوكلاء المعتمدة (2026-11-19).' : 'Approved Nabd Agents Roadmap.'}</p>
-        </div>
-        <div class="flex flex-wrap gap-1.5 rounded-xl bg-surface-900 p-1 border border-slate-800">
-          ${tabs.map(([id, label]) => `
-            <button type="button" data-bp-tab="${id}" class="rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-              state.blueprintTab === id ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
-            }">${label}</button>
-          `).join('')}
-        </div>
-      </div>
-      ${tabBody}
+      })}
     </div>
   `;
 }
 
 // =========================================================================
-// 7. MODALS & DRAWERS
+// 6. MODALS & DRAWERS
 // =========================================================================
 function openModal(title, htmlBody) {
   const tEl = document.getElementById('appModalTitle');
@@ -2104,6 +1486,8 @@ function openModal(title, htmlBody) {
   if (!modal || !tEl || !bEl) return;
   tEl.textContent = title;
   bEl.innerHTML = htmlBody;
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
   modal.classList.remove('hidden');
   modal.classList.add('flex');
 }
@@ -2120,6 +1504,9 @@ function openAlertsDrawer() {
   const body = document.getElementById('alertsContent');
   const modal = document.getElementById('alertsModal');
   if (!body || !modal) return;
+
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
 
   body.innerHTML = `
     <div class="space-y-2.5">
@@ -2157,7 +1544,7 @@ function openAlertsDrawer() {
 }
 
 // =========================================================================
-// 8. MAIN RENDERER & EVENT BINDINGS
+// 7. MAIN RENDERER & EVENT BINDINGS
 // =========================================================================
 function renderApp() {
   document.documentElement.lang = state.lang;
@@ -2205,16 +1592,13 @@ function renderApp() {
     else if (state.view === 'board') main.innerHTML = renderBoard();
     else if (state.view === 'tasks') main.innerHTML = renderTasks();
     else if (state.view === 'handoffs') main.innerHTML = renderHandoffs();
-    else if (state.view === 'pipeline') main.innerHTML = renderPipeline();
-    else main.innerHTML = renderBlueprint();
+    else {
+      state.view = 'overview';
+      main.innerHTML = renderOverview();
+    }
   }
 
   bindViewEvents();
-
-  if (state.view === 'blueprint' && state.blueprintTab === 'pricing') {
-    renderSvgBreakEven(document.getElementById('svgChartContainer'));
-  }
-
   updateLiveBarUI();
   saveState();
 }
@@ -2235,6 +1619,20 @@ function bindViewEvents() {
     });
   });
 
+  document.querySelectorAll('[data-task-filter-owner]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.taskFilterOwner = btn.getAttribute('data-task-filter-owner');
+      renderApp();
+    });
+  });
+
+  document.querySelectorAll('[data-task-filter-status]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.taskFilterStatus = btn.getAttribute('data-task-filter-status');
+      renderApp();
+    });
+  });
+
   document.querySelectorAll('[data-heartbeat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-heartbeat');
@@ -2248,180 +1646,47 @@ function bindViewEvents() {
     });
   });
 
-  document.querySelectorAll('[data-agent-state]').forEach((sel) => {
-    sel.addEventListener('change', () => {
-      const id = sel.getAttribute('data-agent-state');
-      const ag = state.agents.find((a) => a.id === id);
-      if (!ag) return;
-      ag.status = sel.value;
-      addAudit(sel.value === 'waiting_human' || sel.value === 'unresponsive' ? 'alert' : 'ingest', `state:${ag.name}`, `تغيير حالة ${ag.name} إلى ${t('states.' + sel.value)}.`, `Changed ${ag.name} state to ${sel.value}.`);
-      showToast(isAr() ? `تم تغيير حالة ${ag.name}` : `Updated ${ag.name} state`, 'info');
-      renderApp();
+  document.querySelectorAll('[data-open-task-details]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-open-task-details');
+      openTaskDetailsModal(id);
     });
   });
 
-  const simTtlBtn = document.getElementById('simulateTtlBtn');
-  if (simTtlBtn) {
-    simTtlBtn.addEventListener('click', () => {
-      let flipped = 0;
-      state.agents.forEach((a) => {
-        a.minutesAgo += 35;
-        if (a.status === 'working' && a.minutesAgo > a.ttlMinutes) {
-          a.status = 'unresponsive';
-          flipped++;
-          addAudit('alert', 'system:ttl-watchdog', `تجاوز الوكيل ${a.name} مهلة النبض (${a.ttlMinutes}m) ← unresponsive.`, `Agent ${a.name} exceeded ${a.ttlMinutes}m TTL.`);
-        }
-      });
-      showToast(
-        flipped
-          ? (isAr() ? `رصد النظام ${flipped} وكيلًا غير متجاوب!` : `Detected ${flipped} unresponsive agent(s)!`)
-          : (isAr() ? 'تقدّم الزمن +35 دقيقة.' : 'Advanced clock +35m.'),
-        flipped ? 'danger' : 'info'
-      );
-      renderApp();
-    });
-  }
-
-  // Inspect Task Modal
   document.querySelectorAll('[data-inspect-task]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const tid = btn.getAttribute('data-inspect-task');
-      const idx = Number(btn.getAttribute('data-inspect-idx'));
-      const task = state.tasks.find((x) => x.id === tid);
+      const taskId = btn.getAttribute('data-inspect-task');
+      const idx = parseInt(btn.getAttribute('data-inspect-idx'), 10);
+      const task = state.tasks.find((t) => t.id === taskId);
       if (!task || !task.artifacts[idx]) return;
       const art = task.artifacts[idx];
+      const safeUrl = sanitizeUrl(art.url);
       openModal(`${task.id} — ${art.label}`, `
-        <div class="space-y-3 text-xs">
-          <div class="grid sm:grid-cols-3 gap-2">
-            <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+        <div class="space-y-4 text-xs">
+          <div class="grid grid-cols-3 gap-2">
+            <div class="rounded-xl bg-surface-950 border border-slate-800 p-2.5">
               <div class="text-slate-400 text-[10px]">Checks</div>
-              <div class="font-mono font-bold text-emerald-400 mt-0.5">${escapeHtml(art.checks)}</div>
+              <div class="font-mono text-emerald-400 truncate mt-0.5">${escapeHtml(art.checks)}</div>
             </div>
-            <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+            <div class="rounded-xl bg-surface-950 border border-slate-800 p-2.5">
               <div class="text-slate-400 text-[10px]">Branch</div>
-              <div class="font-mono text-cyan-300 mt-0.5">${escapeHtml(art.branch || 'main')}</div>
+              <div class="font-mono text-cyan-300 truncate mt-0.5">${escapeHtml(art.branch || 'main')}</div>
             </div>
-            <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+            <div class="rounded-xl bg-surface-950 border border-slate-800 p-2.5">
               <div class="text-slate-400 text-[10px]">Commit</div>
               <div class="font-mono text-slate-200 truncate mt-0.5">${escapeHtml(art.commit || '—')}</div>
             </div>
           </div>
-          ${sanitizeUrl(art.url) ? `<a href="${escapeHtml(sanitizeUrl(art.url))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">↗ ${isAr() ? 'فتح الرابط على GitHub' : 'Open on GitHub'}</a>` : `<span class="text-xs text-slate-500 font-mono italic">${isAr() ? 'رابط غير متاح أو غير آمن' : 'No safe link'}</span>`}
+          ${safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">↗ ${isAr() ? 'فتح الرابط على GitHub' : 'Open on GitHub'}</a>` : `<span class="text-xs text-slate-400 font-mono italic">${isAr() ? 'رابط غير متاح أو غير آمن' : 'No safe link'}</span>`}
           <pre dir="ltr" class="rounded-xl bg-surface-950 border border-slate-800 p-4 text-[11px] text-emerald-200 overflow-x-auto custom-scroll whitespace-pre-wrap leading-relaxed">${escapeHtml(art.details)}</pre>
         </div>
       `);
     });
   });
-
-  // Open Task Details & Epistemic Honesty Sequence Modal
-  document.querySelectorAll('[data-open-task-details]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const tid = btn.getAttribute('data-open-task-details');
-      openTaskDetailsModal(tid);
-    });
-  });
-
-  // Advance Handoff
-  document.querySelectorAll('[data-advance-handoff]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-advance-handoff');
-      const h = state.handoffs.find((x) => x.id === id);
-      if (!h) return;
-      const stages = ['sent', 'received', 'accepted', 'completed'];
-      const idx = stages.indexOf(h.state);
-      if (idx < stages.length - 1) {
-        h.state = stages[idx + 1];
-        h.minutesInState = 0;
-        addAudit('ingest', `handoff:${h.id}`, `ترقية التسليم ${h.id} إلى ${t('handoffStates.' + h.state)}.`, `Advanced handoff ${h.id} to ${h.state}.`);
-        showToast(isAr() ? `تمت الترقية إلى ${t('handoffStates.' + h.state)}` : `Advanced to ${h.state}`, 'success');
-        renderApp();
-      }
-    });
-  });
-
-  // Loop guard simulator
-  const simLoopBtn = document.getElementById('simLoopGuardBtn');
-  if (simLoopBtn) {
-    simLoopBtn.addEventListener('click', () => {
-      const ag = state.agents.find((a) => a.id === 'site-agent') || state.agents[0];
-      if (ag) ag.status = 'waiting_human';
-      addAudit('alert', 'system:loop-guard', 'رصد حلقة تسليم متكررة (>5 في 10 دقائق) ← تجميد المهمة وتحويل الحالة إلى waiting_human.', 'Loop Guard triggered (>5 handoffs in 10m) → moved to waiting_human.');
-      showToast(isAr() ? '⚡ تم تفعيل Loop Guard وتجميد الحالة إلى waiting_human!' : '⚡ Loop Guard triggered: frozen to waiting_human!', 'danger');
-      renderApp();
-    });
-  }
-
-  // Pipeline execution
-  document.querySelectorAll('[data-pipe-mode]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.pipelineMode = btn.getAttribute('data-pipe-mode');
-      renderApp();
-    });
-  });
-
-  const runPipelineBtn = document.getElementById('runPipelineBtn');
-  if (runPipelineBtn) {
-    runPipelineBtn.addEventListener('click', () => {
-      const input = document.getElementById('pipelineInput').value;
-      const validSig = document.getElementById('pipeValidSig').checked;
-      const resultBox = document.getElementById('pipelineResultBox');
-
-      if (!validSig) {
-        addAudit('alert', 'edge:auth-gate', 'رفض طلب وارد: فشل التحقق من التوقيع (401 Unauthorized).', 'Rejected inbound: failed signature (401 Unauthorized).');
-        resultBox.innerHTML = `
-          <div class="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-xs space-y-1.5">
-            <div class="font-bold text-rose-300">✕ GATE 01 BLOCKED — 401 Unauthorized</div>
-            <p class="text-slate-300">${isAr() ? 'تم رفض الحدث بسبب فشل التوقيع.' : 'Blocked due to failed signature.'}</p>
-          </div>
-        `;
-        showToast(isAr() ? 'رفضت البوابة الحدث: توقيع غير صالح' : 'Blocked: invalid signature', 'danger');
-        saveState();
-        return;
-      }
-
-      const { redacted, found } = redactSecrets(input);
-      addAudit('redact', 'edge:secret-redactor', `حجب أسرار: ${found.length ? found.join(', ') : 'لا توجد'} قبل الحفظ.`, `Sanitized secrets: ${found.length ? found.join(', ') : 'none'}.`);
-
-      resultBox.innerHTML = `
-        <div class="space-y-3 text-xs">
-          <div class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5">
-            <div class="font-bold text-emerald-300">✓ PASSED ALL 4 EDGE GATES (201 OK)</div>
-            <div class="mt-1 text-slate-300">
-              ${isAr() ? 'الأسرار المحجوبة:' : 'Redacted:'} <strong>${found.length ? escapeHtml(found.join(', ')) : (isAr() ? 'لا توجد' : 'None')}</strong>
-            </div>
-          </div>
-          <pre dir="ltr" class="rounded-xl bg-surface-950 border border-slate-800 p-3 text-[11px] text-amber-200 max-h-44 overflow-auto custom-scroll whitespace-pre-wrap">${escapeHtml(redacted)}</pre>
-        </div>
-      `;
-      showToast(isAr() ? 'اجتاز الفحص بنجاح وحُجبت الأسرار' : 'Passed and secrets scrubbed', 'success');
-      saveState();
-    });
-  }
-
-  // Blueprint Tabs
-  document.querySelectorAll('[data-bp-tab]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.blueprintTab = btn.getAttribute('data-bp-tab');
-      renderApp();
-    });
-  });
-
-  // Sliders
-  const bindSlider = (id, key) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener('input', () => {
-      state.pricing[key] = parseInt(el.value, 10);
-      renderApp();
-    });
-  };
-  bindSlider('slFixed', 'fixedCost');
-  bindSlider('slPrice', 'proPrice');
-  bindSlider('slSubs', 'targetSubs');
 }
 
 // =========================================================================
-// 9. GLOBAL LISTENERS & KEYBOARD SHORTCUTS
+// 8. GLOBAL LISTENERS & KEYBOARD SHORTCUTS
 // =========================================================================
 function initGlobalListeners() {
   document.querySelectorAll('.nav-btn, .nav-btn-mobile').forEach((btn) => {
@@ -2487,7 +1752,7 @@ function initGlobalListeners() {
   bindSearch('globalSearchInput');
   bindSearch('mobileSearchInput');
 
-  // Keyboard Shortcuts: [ / ] search, [ R ] refresh, [ 1-6 ] views, [ Esc ] close
+  // Keyboard Navigation: [ / ] search, [ R ] sync, [ 1-4 ] views, [ Esc ] close
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
       if (e.key === 'Escape') {
@@ -2508,8 +1773,8 @@ function initGlobalListeners() {
     } else if (e.key === 'r' || e.key === 'R') {
       e.preventDefault();
       fetchLiveAgentHub(false);
-    } else if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
-      const views = ['overview', 'board', 'tasks', 'handoffs', 'pipeline', 'blueprint'];
+    } else if (['1', '2', '3', '4'].includes(e.key)) {
+      const views = ['overview', 'board', 'tasks', 'handoffs'];
       const targetView = views[parseInt(e.key, 10) - 1];
       if (targetView && state.view !== targetView) {
         state.view = targetView;
@@ -2527,44 +1792,43 @@ function initGlobalListeners() {
     }
   });
 
-  // Tab Visibility API: pause polling when hidden, resume & refresh immediately on visible
+  // Tab Visibility Auto-pause & Auto-refresh (every 30s)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
+    if (document.hidden) {
       if (autoRefreshTimer) {
         clearInterval(autoRefreshTimer);
         autoRefreshTimer = null;
       }
-    } else if (document.visibilityState === 'visible') {
+    } else {
       fetchLiveAgentHub(true);
-      if (state.autoRefresh && !autoRefreshTimer) {
-        autoRefreshTimer = setInterval(() => fetchLiveAgentHub(true), 45000);
-      }
+      startAutoRefresh();
     }
+  });
+
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  state.autoRefreshSecondsRemaining = 30;
+  autoRefreshTimer = setInterval(() => {
+    state.autoRefreshSecondsRemaining -= 1;
+    if (state.autoRefreshSecondsRemaining <= 0) {
+      state.autoRefreshSecondsRemaining = 30;
+      fetchLiveAgentHub(true);
+    }
+  }, 1000);
+}
+
+// =========================================================================
+// 9. SERVICE WORKER & BOOTSTRAP
+// =========================================================================
+if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
 }
 
-// =========================================================================
-// 10. BOOT & PWA SERVICE WORKER
-// =========================================================================
-function boot() {
-  initGlobalListeners();
-  
-  // Instant First Paint from Cache (<16ms)
-  renderApp();
-
-  // Background SWR Revalidation
-  fetchLiveAgentHub(true);
-
-  if (state.autoRefresh) {
-    autoRefreshTimer = setInterval(() => fetchLiveAgentHub(true), 45000);
-  }
-
-  // Register PWA Service Worker
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
-    });
-  }
-}
-
-boot();
+initGlobalListeners();
+renderApp();
+fetchLiveAgentHub(true);
