@@ -5,6 +5,8 @@
  * In-Memory Debounced Search, Keyboard Shortcuts, Tab Visibility Management & PWA.
  */
 
+import { sanitizeUrl, isValidSafeUrl, escapeHtml, safeLinkHref } from './modules/security.js';
+
 // =========================================================================
 // 1. I18N DICTIONARY (Arabic RTL default + English LTR)
 // =========================================================================
@@ -389,14 +391,7 @@ function isAr() {
   return state.lang === 'ar';
 }
 
-function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// escapeHtml imported from ./modules/security.js
 
 function nowTime() {
   return new Date().toTimeString().slice(0, 8);
@@ -763,15 +758,7 @@ function stateBadge(status) {
 // =========================================================================
 // 4.1 COORDINATION TOWER ENGINE («نبض | برج التنسيق»)
 // =========================================================================
-function isValidSafeUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch (e) {
-    return false;
-  }
-}
+// isValidSafeUrl and sanitizeUrl imported from ./modules/security.js
 
 function formatWaitingDuration(minutes) {
   const m = Math.max(0, Number(minutes) || 0);
@@ -1003,8 +990,8 @@ function renderCoordinationTower() {
               <!-- Bottom Actions Bar -->
               <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-xs">
                 <div>
-                  ${item.evidenceUrl ? `
-                    <a href="${escapeHtml(item.evidenceUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+                  ${sanitizeUrl(item.evidenceUrl) ? `
+                    <a href="${escapeHtml(sanitizeUrl(item.evidenceUrl))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
                       <span>📎 ${escapeHtml(t('tower.evidenceLabel'))}</span>
                       <span class="text-[10px]">↗</span>
                     </a>
@@ -1144,11 +1131,11 @@ function openTaskDetailsModal(taskId) {
           </div>
         ` : ''}
 
-        ${safeEvidence ? `
+        ${sanitizeUrl(safeEvidence) ? `
           <div class="pt-2 border-t border-slate-800/80">
-            <a href="${escapeHtml(safeEvidence)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+            <a href="${escapeHtml(sanitizeUrl(safeEvidence))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
               <span>↗ ${isAr() ? 'عرض الدليل والمخرجات المرتبطة' : 'Inspect Evidence Artifact'}</span>
-              <span class="font-mono text-[10px] opacity-75">(${escapeHtml(safeEvidence)})</span>
+              <span class="font-mono text-[10px] opacity-75">(${escapeHtml(sanitizeUrl(safeEvidence))})</span>
             </a>
             <p class="text-[10px] text-slate-400 mt-1.5 italic">
               ℹ ${isAr() ? 'فتح الرابط للمشاهدة والتحقق فقط — لا يؤدي تلقائياً إلى قبول التسليم. يتم تحديث الحالة عبر تعديل ملف agents-state.json في المستودع.' : 'Note: Reviewing evidence does not automatically accept the handoff. Updates must be committed to agents-state.json.'}
@@ -2319,7 +2306,7 @@ function bindViewEvents() {
               <div class="font-mono text-slate-200 truncate mt-0.5">${escapeHtml(art.commit || '—')}</div>
             </div>
           </div>
-          ${art.url ? `<a href="${escapeHtml(art.url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">↗ ${isAr() ? 'فتح الرابط على GitHub' : 'Open on GitHub'}</a>` : ''}
+          ${sanitizeUrl(art.url) ? `<a href="${escapeHtml(sanitizeUrl(art.url))}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">↗ ${isAr() ? 'فتح الرابط على GitHub' : 'Open on GitHub'}</a>` : `<span class="text-xs text-slate-500 font-mono italic">${isAr() ? 'رابط غير متاح أو غير آمن' : 'No safe link'}</span>`}
           <pre dir="ltr" class="rounded-xl bg-surface-950 border border-slate-800 p-4 text-[11px] text-emerald-200 overflow-x-auto custom-scroll whitespace-pre-wrap leading-relaxed">${escapeHtml(art.details)}</pre>
         </div>
       `);
