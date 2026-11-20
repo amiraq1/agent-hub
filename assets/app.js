@@ -1242,6 +1242,35 @@ function openTaskDetailsModal(taskId) {
     </div>
   `;
 
+  // 3.1 Quick Actions Bridge (Copy JSON Patch / GitHub Web Edit Link)
+  const quickActionsHtml = `
+    <div class="rounded-2xl border border-slate-800 bg-surface-950/90 p-4 space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-white">${isAr() ? 'إجراءات التنسيق السريعة (Action Quick-Bridge)' : 'Action Quick-Bridge'}</span>
+          <span class="rounded bg-surface-900 border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">GitHub</span>
+        </div>
+        <a href="https://github.com/amiraq1/agent-hub/edit/main/agents-state.json" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-2">
+          <span>${isAr() ? 'تحرير agents-state.json على GitHub' : 'Edit on GitHub'}</span>
+          <span class="text-[10px]">↗</span>
+        </a>
+      </div>
+      <p class="text-[11px] text-slate-400 leading-relaxed">
+        ${isAr()
+          ? 'انسخ رقعة القرار الجاهزة بنقرة واحدة، ثم افتح رابط التحرير المباشر على GitHub لإتمام الاعتماد أو الإعادة بثوانٍ:'
+          : 'Copy the decision JSON patch in one click, then edit agents-state.json directly on GitHub:'}
+      </p>
+      <div class="flex flex-wrap gap-2 pt-1">
+        <button type="button" data-copy-patch="accept" class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 transition">
+          <span>✓ ${isAr() ? 'نسخ كود الاعتماد (Accept JSON)' : 'Copy Accept JSON'}</span>
+        </button>
+        <button type="button" data-copy-patch="return" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 transition">
+          <span>↩ ${isAr() ? 'نسخ كود الإعادة (Return JSON)' : 'Copy Return JSON'}</span>
+        </button>
+      </div>
+    </div>
+  `;
+
   openModal(
     `${task.id} — ${isAr() ? (task.titleAr || task.title) : (task.titleEn || task.title)}`,
     `
@@ -1249,10 +1278,49 @@ function openTaskDetailsModal(taskId) {
         ${cacheBanner}
         ${disambiguationBoxes}
         ${handoffHtml}
+        ${quickActionsHtml}
         ${sequenceHtml}
       </div>
     `
   );
+
+  const modalBody = document.getElementById('appModalBody');
+  if (modalBody) {
+    modalBody.querySelectorAll('[data-copy-patch]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-copy-patch');
+        const nowIso = new Date().toISOString();
+        let payload = {};
+        if (mode === 'accept') {
+          payload = {
+            status: "done",
+            handoff: {
+              status: "accepted",
+              decision: {
+                by: "muse",
+                at: nowIso,
+                reason: "تمت مراجعة واعتماد المخرجات بنجاح والموافقة على الدمج."
+              }
+            }
+          };
+        } else {
+          payload = {
+            status: "in_progress",
+            handoff: {
+              status: "returned",
+              decision: {
+                by: "muse",
+                at: nowIso,
+                reason: "يرجى معالجة الملاحظات التالية وإعادة التسليم: [اكتب السبب هنا]"
+              }
+            }
+          };
+        }
+        copyText(JSON.stringify(payload, null, 2));
+        showToast(isAr() ? 'تم نسخ كود القرار (JSON) إلى الحافظة' : 'Copied decision JSON to clipboard', 'success');
+      });
+    });
+  }
 }
 
 // =========================================================================
