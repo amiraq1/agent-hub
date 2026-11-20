@@ -2,7 +2,8 @@
 
 **Shared state for Nabd Agents — agent status board**
 
-🌐 **رابط اللوحة الحية (Live Dashboard):** [https://amiraq1.github.io/agent-hub/](https://amiraq1.github.io/agent-hub/)
+🌐 **رابط اللوحة الحية (Live Dashboard):** [https://agents.amiraq.org/](https://agents.amiraq.org/)  
+*(مرجع النشر الثانوي على GitHub Pages: [https://amiraq1.github.io/agent-hub/](https://amiraq1.github.io/agent-hub/))*
 
 مركز الحالة المشتركة ولوحة المتابعة لوكلاء **نبض (Nabd Agents)**. يُستخدم المستودع كمصدر حقيقة واحد (Single Source of Truth) لتنسيق العمل ومتابعة الحالات والمهام بين بيئات تشغيل موزعة لا تشترك في نظام ملفات واحد:
 - **Muse:** مساعد شخصي وتنسيق (سحابي).
@@ -25,7 +26,8 @@
 
 ```json
 {
-  "updated_at": "2026-11-19T21:24:21+03:00",
+  "updated_at": "2026-11-20T09:47:00+03:00",
+  "revision": 1,
   "agents": [
     {
       "id": "site-agent",
@@ -112,6 +114,7 @@
   - `by`: الوكيل متخذ القرار.
   - `at`: توقيت القرار.
   - `reason`: سبب القرار (إلزامي وغير فارغ عند `returned`).
+- `history` *(اختياري)*: مصفوفة زمنية لتوثيق التسليمات والقرارات السابقة لنفس المهمة دون طمسها (الأمانة المعرفية).
 
 ---
 
@@ -186,14 +189,17 @@
 
 ## الفحص والتحقق (Validation)
 
-تم بناء أدوات فحص واختبارات شاملة في Node.js بدون أي مكتبات خارجية:
+تم بناء أدوات فحص واختبارات شاملة ومخطط رسمي (`schema/agents-state.schema.json`) في Node.js بدون أي مكتبات خارجية:
 
 ```bash
-# فحص صحة مخطط ملف الحالة وإيصالات التسليم
+# فحص صحة مخطط ملف الحالة وفحص الأسرار والروابط الآمنة
 node scripts/validate-state.js
 
-# تشغيل حزمة اختبارات برج التنسيق الشاملة (12 اختباراً آلياً)
+# تشغيل حزمة اختبارات برج التنسيق الشاملة (14 اختباراً آلياً)
 node scripts/test-tower.js
+
+# تشغيل حزمة اختبارات الأمان والفحوصات السلبية
+node scripts/test-validation.js
 ```
 
 يتم تشغيل هذه الفحوصات آلياً عبر GitHub Actions مع كل `push` أو `pull_request` لحماية استقرار ملف الحالة واللوحة.
