@@ -24,3 +24,6 @@ jobs:
 
       - name: Test Coordination Tower & Handoff Suite
         run: node scripts/test-tower.js
+
+      - name: Run Security & Negative Validation Tests
+        run: node scripts/test-validation.js

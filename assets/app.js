@@ -1813,6 +1813,10 @@ function startAutoRefresh() {
   state.autoRefreshSecondsRemaining = 30;
   autoRefreshTimer = setInterval(() => {
     state.autoRefreshSecondsRemaining -= 1;
+    const cdEl = document.getElementById('autoRefreshCountdown');
+    if (cdEl) {
+      cdEl.textContent = `⏱ ${state.autoRefreshSecondsRemaining}s`;
+    }
     if (state.autoRefreshSecondsRemaining <= 0) {
       state.autoRefreshSecondsRemaining = 30;
       fetchLiveAgentHub(true);
