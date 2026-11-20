@@ -43,6 +43,23 @@ const I18N = {
       github: 'ملف GitHub مستقل',
       email: 'بريد وارد مُهيكل',
       cli: 'API + CLI (المرحلة 2)'
+    },
+    tower: {
+      title: 'من عليه الخطوة التالية؟',
+      subtitle: 'مركز الإجراءات وتوجيه قرارات التنسيق الفورية',
+      emptyTitle: 'لا توجد مهام تنتظر إجراءً حالياً — جميع المهام مكتملة أو تسير دون عوائق',
+      emptyDesc: 'لا يوجد أي تسليم معلق أو معاد يتطلب تدخلاً عاجلاً. يمكنك مراقبة نبضات الوكلاء أو الاطلاع على سجل التسليمات.',
+      actionNeeded: 'مهمة تحتاج إجراء',
+      actionsNeeded: 'مهام تحتاج إجراء',
+      allClear: 'الوضع مستقر ومستمر',
+      returnedBadge: 'معادة (مطلوب تصحيح)',
+      pendingBadge: 'معلقة (بانتظار المراجعة)',
+      acceptedBadge: 'مقبولة (العمل جارٍ)',
+      actorLabel: 'صاحب الخطوة التالية',
+      nextStepLabel: 'الخطوة التالية المطلوبة',
+      waitingAgeLabel: 'عمر الانتظار',
+      evidenceLabel: 'عرض الدليل والمخرجات',
+      detailsBtn: 'التفاصيل والتسلسل المتاح'
     }
   },
   en: {
@@ -79,6 +96,23 @@ const I18N = {
       github: 'GitHub Agent File',
       email: 'Structured Inbound Email',
       cli: 'API + CLI (Phase 2)'
+    },
+    tower: {
+      title: 'Who Has the Next Step?',
+      subtitle: 'Coordination Tower & Immediate Next Actions',
+      emptyTitle: 'No tasks awaiting action — all tasks completed or running smoothly',
+      emptyDesc: 'Zero stalled or returned handoffs requiring urgent intervention. You can monitor heartbeats or check the handoff ledger.',
+      actionNeeded: 'action needed',
+      actionsNeeded: 'actions needed',
+      allClear: 'All Clear',
+      returnedBadge: 'Returned (Fix Needed)',
+      pendingBadge: 'Pending (Review Needed)',
+      acceptedBadge: 'Accepted (In Progress)',
+      actorLabel: 'Current Next Step Owner',
+      nextStepLabel: 'Required Next Step',
+      waitingAgeLabel: 'Waiting Age',
+      evidenceLabel: 'Inspect Evidence Artifact',
+      detailsBtn: 'Details & Available Sequence'
     }
   }
 };
@@ -229,6 +263,36 @@ function createDefaultState() {
             commit: '98badfcc50f050841a8d68141041f9738699d602',
             branch: 'audit/reliability',
             details: F24_MANIFEST + '\n\n' + F24_SAMPLE_LOGS
+          }
+        ]
+      },
+      {
+        id: 'perf-opt-phase',
+        titleAr: 'المرحلة الاحترافية لتحسين السرعة والأداء الشامل لموقع amnabd.com',
+        titleEn: 'Comprehensive Performance Optimization for amnabd.com',
+        ownerId: 'site-agent',
+        state: 'waiting_human',
+        updatedAt: '2026-11-19 23:05',
+        summaryAr: 'اكتمال تحسين Core Web Vitals ورفع PR #96 مع اجتياز 633 فحصًا بنجاح.',
+        summaryEn: 'Completed Core Web Vitals optimization and opened PR #96 with 633 passed tests.',
+        handoff: {
+          from: 'site-agent',
+          to: 'muse',
+          at: '2026-11-19T23:05:00+03:00',
+          status: 'pending',
+          summary: 'اكتمال المرحلة الاحترافية لتحسين السرعة والأداء الشامل لموقع amnabd.com بنجاح (633 اختبار، bundle budget 122.94KB)',
+          next_step: 'مراجعة واعتماد PR #96 ودمجه إلى main',
+          evidence_url: 'https://github.com/amiraq1/amnabd-deals-web/pull/96'
+        },
+        artifacts: [
+          {
+            type: 'pr',
+            label: 'amnabd-deals-web/pull/96',
+            url: 'https://github.com/amiraq1/amnabd-deals-web/pull/96',
+            checks: 'passed (633 tests, bundle 122.94KB)',
+            commit: '274287c',
+            branch: 'agent/perf-optimization',
+            details: 'Pull Request: https://github.com/amiraq1/amnabd-deals-web/pull/96\nOwner: site-agent\nStatus: waiting_review'
           }
         ]
       }
@@ -411,7 +475,10 @@ function minutesSinceIso(isoStr) {
 
 function computeFingerprint(data) {
   if (!data) return '';
-  return `${data.updated_at || ''}::${data.agents ? data.agents.length : 0}::${data.tasks ? data.tasks.length : 0}::${data.messages ? data.messages.length : 0}`;
+  const handoffsSig = Array.isArray(data.tasks)
+    ? data.tasks.map((t) => t.handoff ? (t.id + ':' + t.handoff.status + ':' + (t.handoff.decision?.at || '')) : '').join('|')
+    : '';
+  return `${data.updated_at || ''}::${data.agents ? data.agents.length : 0}::${data.tasks ? data.tasks.length : 0}::${data.messages ? data.messages.length : 0}::${handoffsSig}`;
 }
 
 function applyAgentHubJson(data, sourceLabel, silent = false) {
@@ -480,10 +547,13 @@ function applyAgentHubJson(data, sourceLabel, silent = false) {
       titleEn: title,
       ownerId,
       state: st,
+      rawStatus: stRaw,
       updatedAt: tk.updated_at || tk.last_updated || tk.created_at || nowTime(),
       summaryAr: tk.summary || tk.notes || tk.description || (prUrl ? ('مرتبط بـ PR: ' + prUrl) : 'مهمة نشطة'),
       summaryEn: tk.summary || tk.notes || tk.description || (prUrl ? ('Linked PR: ' + prUrl) : 'Active task'),
-      artifacts
+      artifacts,
+      handoff: tk.handoff || null,
+      rawTask: tk
     };
   });
 
@@ -691,6 +761,501 @@ function stateBadge(status) {
 }
 
 // =========================================================================
+// 4.1 COORDINATION TOWER ENGINE («نبض | برج التنسيق»)
+// =========================================================================
+function isValidSafeUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+}
+
+function formatWaitingDuration(minutes) {
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m < 1) return isAr() ? 'الآن (أقل من دقيقة)' : 'Just now (<1m)';
+  if (m === 1) return isAr() ? 'منذ دقيقة واحدة' : '1 minute ago';
+  if (m === 2) return isAr() ? 'منذ دقيقتين' : '2 minutes ago';
+  if (m < 11) return isAr() ? `منذ ${m} دقائق` : `${m} minutes ago`;
+  if (m < 60) return isAr() ? `منذ ${m} دقيقة` : `${m} minutes ago`;
+  const hours = Math.floor(m / 60);
+  const rem = m % 60;
+  if (hours === 1) return isAr() ? `منذ ساعة${rem ? ' و' + rem + ' دقيقة' : ''}` : `1h ${rem ? rem + 'm' : ''} ago`;
+  if (hours === 2) return isAr() ? `منذ ساعتين${rem ? ' و' + rem + ' دقيقة' : ''}` : `2h ${rem ? rem + 'm' : ''} ago`;
+  if (hours < 24) return isAr() ? `منذ ${hours} ساعات${rem ? ' و' + rem + ' دقيقة' : ''}` : `${hours}h ${rem ? rem + 'm' : ''} ago`;
+  const days = Math.floor(hours / 24);
+  const remH = hours % 24;
+  return isAr() ? `منذ ${days} ${days === 1 ? 'يوم' : days === 2 ? 'يومين' : 'أيام'}${remH ? ' و' + remH + ' س' : ''}` : `${days}d ago`;
+}
+
+function getCoordinationTowerItems(tasks, agents) {
+  const activeTasks = (tasks || []).filter(
+    (t) => t.status !== 'done' && t.status !== 'cancelled' && t.state !== 'completed' && t.rawStatus !== 'done' && t.rawStatus !== 'completed' && t.rawStatus !== 'cancelled'
+  );
+
+  const items = [];
+
+  for (const task of activeTasks) {
+    if (!task.handoff) continue;
+    const h = task.handoff;
+    const fromAgent = (agents || []).find((a) => a.id === h.from) || { id: h.from, name: h.from };
+    const toAgent = (agents || []).find((a) => a.id === h.to) || { id: h.to, name: h.to };
+
+    let actorId;
+    let actorName;
+    let actorRoleAr;
+    let actorRoleEn;
+    let waitTimestamp;
+    let rank;
+    let returnReason = null;
+
+    if (h.status === 'returned') {
+      rank = 1;
+      actorId = h.from;
+      actorName = fromAgent.name || h.from;
+      actorRoleAr = 'المرسل (مطلوب تصحيح سبب الإعادة وإعادة التسليم)';
+      actorRoleEn = 'Sender (Action needed to address return reason)';
+      waitTimestamp = h.decision?.at || h.at;
+      returnReason = h.decision?.reason || null;
+    } else if (h.status === 'pending') {
+      rank = 2;
+      actorId = h.to;
+      actorName = toAgent.name || h.to;
+      actorRoleAr = 'المستلم (مطلوب مراجعة التسليم واتخاذ القرار)';
+      actorRoleEn = 'Recipient (Review handoff and decide)';
+      waitTimestamp = h.at;
+    } else if (h.status === 'accepted') {
+      rank = 3;
+      actorId = h.to;
+      actorName = toAgent.name || h.to;
+      actorRoleAr = 'المستلم (التسليم مقبول والمهمة جارية)';
+      actorRoleEn = 'Recipient (Handoff accepted, execution in progress)';
+      waitTimestamp = h.decision?.at || h.at;
+    } else {
+      continue;
+    }
+
+    const waitMs = Math.max(0, Date.now() - new Date(waitTimestamp).getTime());
+    const waitMinutes = Number.isNaN(waitMs) ? 0 : Math.floor(waitMs / (1000 * 60));
+
+    items.push({
+      task,
+      handoff: h,
+      rank,
+      actorId,
+      actorName,
+      actorRoleAr,
+      actorRoleEn,
+      nextStep: h.next_step,
+      summary: h.summary,
+      evidenceUrl: isValidSafeUrl(h.evidence_url) ? h.evidence_url : null,
+      waitTimestamp,
+      waitMinutes,
+      returnReason
+    });
+  }
+
+  items.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return b.waitMinutes - a.waitMinutes;
+  });
+
+  return items;
+}
+
+function renderCoordinationTower() {
+  const items = getCoordinationTowerItems(state.tasks, state.agents);
+
+  if (!items.length) {
+    return `
+      <section class="rounded-2xl border border-emerald-500/30 bg-surface-900/90 p-5 contain-opt space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              </svg>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h2 class="text-base font-bold text-white tracking-tight">${escapeHtml(t('tower.title'))}</h2>
+                <span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
+                  <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 me-1"></span>
+                  ${escapeHtml(t('tower.allClear'))}
+                </span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(t('tower.subtitle'))}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-slate-800 bg-surface-950/70 p-4 text-center sm:text-start">
+          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xl font-bold">
+            ✓
+          </div>
+          <div class="space-y-1">
+            <h3 class="text-sm font-bold text-emerald-200">
+              ${escapeHtml(t('tower.emptyTitle'))}
+            </h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              ${escapeHtml(t('tower.emptyDesc'))}
+            </p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="rounded-2xl border border-amber-500/30 bg-surface-900/90 p-5 contain-opt space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-bold text-white tracking-tight">${escapeHtml(t('tower.title'))}</h2>
+              <span class="rounded-md bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
+                ${items.length} ${items.length === 1 ? escapeHtml(t('tower.actionNeeded')) : escapeHtml(t('tower.actionsNeeded'))}
+              </span>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(t('tower.subtitle'))}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        ${items.map((item) => {
+          const isReturned = item.rank === 1;
+          const isPending = item.rank === 2;
+          const cardBorder = isReturned
+            ? 'border-rose-500/50 bg-rose-950/20'
+            : isPending
+              ? 'border-amber-500/40 bg-amber-950/15'
+              : 'border-emerald-500/40 bg-emerald-950/15';
+
+          const badgeClass = isReturned
+            ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+            : isPending
+              ? 'border-amber-500/40 bg-amber-500/15 text-amber-200'
+              : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
+
+          const badgeText = isReturned
+            ? escapeHtml(t('tower.returnedBadge'))
+            : isPending
+              ? escapeHtml(t('tower.pendingBadge'))
+              : escapeHtml(t('tower.acceptedBadge'));
+
+          return `
+            <div class="rounded-xl border ${cardBorder} p-4 space-y-3 transition hover:border-slate-500">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${badgeClass}">
+                    ${badgeText}
+                  </span>
+                  <span class="rounded-md bg-surface-950 px-2 py-0.5 font-mono text-xs font-bold text-cyan-300 border border-slate-800">${escapeHtml(item.task.id)}</span>
+                  <span class="text-sm font-bold text-white">${escapeHtml(isAr() ? (item.task.titleAr || item.task.title) : (item.task.titleEn || item.task.title))}</span>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="font-mono text-[11px] text-slate-400">⏱ ${escapeHtml(t('tower.waitingAgeLabel'))}: <strong class="text-slate-200">${formatWaitingDuration(item.waitMinutes)}</strong></span>
+                </div>
+              </div>
+
+              <!-- Current Next Step Actor -->
+              <div class="rounded-xl bg-surface-950/90 border border-slate-800/90 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-400 font-medium">${escapeHtml(t('tower.actorLabel'))}:</span>
+                  <strong class="text-white bg-surface-900 border border-slate-700 rounded-md px-2 py-0.5 font-bold">${escapeHtml(item.actorName)}</strong>
+                  <span class="text-[11px] text-slate-400">(${escapeHtml(isAr() ? item.actorRoleAr : item.actorRoleEn)})</span>
+                </div>
+                <div class="text-[11px] font-mono text-slate-500">${escapeHtml(item.waitTimestamp || '')}</div>
+              </div>
+
+              <!-- Next Step Required -->
+              <div class="rounded-xl bg-surface-950/70 border border-slate-800 p-3 space-y-1.5 text-xs">
+                <div class="text-slate-300">
+                  <span class="text-slate-400">${isAr() ? 'ملخص الإنجاز:' : 'Summary:'}</span>
+                  <span>${escapeHtml(item.summary)}</span>
+                </div>
+                <div class="text-emerald-300 pt-1 border-t border-slate-800/80">
+                  <strong class="font-bold">${escapeHtml(t('tower.nextStepLabel'))}:</strong>
+                  <span class="text-slate-100 ms-1">${escapeHtml(item.nextStep)}</span>
+                </div>
+              </div>
+
+              <!-- Return Reason Alert (if returned) -->
+              ${item.returnReason ? `
+                <div class="rounded-xl bg-rose-500/10 border border-rose-500/40 p-3 text-xs text-rose-200 space-y-1">
+                  <div class="font-bold flex items-center gap-1.5">
+                    <span>↩</span>
+                    <span>${isAr() ? 'سبب الإعادة من الطرف الآخر:' : 'Return Reason:'}</span>
+                  </div>
+                  <p class="leading-relaxed ps-4">${escapeHtml(item.returnReason)}</p>
+                </div>
+              ` : ''}
+
+              <!-- Bottom Actions Bar -->
+              <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-xs">
+                <div>
+                  ${item.evidenceUrl ? `
+                    <a href="${escapeHtml(item.evidenceUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+                      <span>📎 ${escapeHtml(t('tower.evidenceLabel'))}</span>
+                      <span class="text-[10px]">↗</span>
+                    </a>
+                  ` : `<span class="text-[11px] text-slate-500">${isAr() ? 'لا يوجد رابط دليل مرفق' : 'No evidence link'}</span>`}
+                </div>
+                <button type="button" data-open-task-details="${escapeHtml(item.task.id)}" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-surface-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-emerald-400 hover:text-white transition">
+                  <span>${escapeHtml(t('tower.detailsBtn'))}</span>
+                  <span>${isAr() ? '←' : '→'}</span>
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function openTaskDetailsModal(taskId) {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+
+  const ownerAgent = state.agents.find((a) => a.id === task.ownerId) || { id: task.ownerId, name: task.ownerId, minutesAgo: 0, status: 'unknown' };
+  const h = task.handoff;
+  const isCached = state.liveStatusState === 'cached' || state.liveStatusState === 'offline';
+
+  // Calculate wait duration if handoff exists
+  let handoffWaitMins = 0;
+  if (h && h.at) {
+    const ts = (h.status === 'returned' && h.decision?.at) ? h.decision.at : h.at;
+    const ms = Date.now() - new Date(ts).getTime();
+    handoffWaitMins = Number.isNaN(ms) ? 0 : Math.max(0, Math.floor(ms / 60000));
+  }
+
+  // 1. Banner for Cache status (Requirement 4)
+  const cacheBanner = isCached
+    ? `<div class="rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-center gap-2.5">
+         <span class="text-base">⚠️</span>
+         <div>
+           <strong class="font-bold">${isAr() ? 'نسخة مخزنة محلياً' : 'Locally Cached Copy'}</strong> — ${isAr() ? 'قد لا تعكس آخر تحديث على GitHub. يتم التحقق والتحديث تلقائياً في الخلفية.' : 'May not reflect the latest update on GitHub. Revalidating in background.'}
+         </div>
+       </div>`
+    : `<div class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-200 flex items-center gap-2.5">
+         <span class="text-base">✓</span>
+         <div>
+           <strong class="font-bold">${isAr() ? 'نسخة حية متصلة' : 'Live Connected Copy'}</strong> — ${isAr() ? 'متزامنة مباشرة مع agents-state.json على GitHub.' : 'Synchronized directly with agents-state.json.'}
+         </div>
+       </div>`;
+
+  // 2. Disambiguation between 3 Timestamps (Requirement 4)
+  const disambiguationBoxes = `
+    <div class="space-y-2">
+      <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">${isAr() ? 'فصل التواريخ الصريح (Timestamp Disambiguation)' : 'Timestamp Disambiguation'}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+        <!-- Handoff Age -->
+        <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+          <div class="text-slate-400 text-[10px]">${isAr() ? 'عمر انتظار التسليم' : 'Handoff Waiting Age'}</div>
+          <div class="font-mono font-bold mt-1 ${h ? (h.status === 'returned' ? 'text-rose-400' : 'text-amber-300') : 'text-slate-500'}">
+            ${h ? formatWaitingDuration(handoffWaitMins) : (isAr() ? 'لا يوجد تسليم معلق' : 'No pending handoff')}
+          </div>
+          <div class="text-[10px] text-slate-500 truncate mt-0.5">${h ? (h.at || '—') : '—'}</div>
+        </div>
+
+        <!-- Agent Last Seen -->
+        <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+          <div class="text-slate-400 text-[10px]">${isAr() ? 'آخر ظهور للوكيل المالك' : 'Agent Last Seen'}</div>
+          <div class="font-mono font-bold text-cyan-300 mt-1">
+            ${formatWaitingDuration(ownerAgent.minutesAgo || 0)}
+          </div>
+          <div class="text-[10px] text-slate-500 truncate mt-0.5">${escapeHtml(ownerAgent.name)} (${escapeHtml(ownerAgent.status)})</div>
+        </div>
+
+        <!-- Data Fetch Age -->
+        <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
+          <div class="text-slate-400 text-[10px]">${isAr() ? 'توقيت جلب البيانات المعروضة' : 'Data Fetch Time'}</div>
+          <div class="font-mono font-bold text-emerald-300 mt-1">
+            ${state.liveLastSync || (isAr() ? 'ذاكرة أولية' : 'Initial Cache')}
+          </div>
+          <div class="text-[10px] text-slate-500 truncate mt-0.5">${isCached ? (isAr() ? 'مخزن محلياً' : 'Local Storage') : (isAr() ? 'جلب حي من GitHub' : 'Live GitHub Fetch')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 3. Handoff receipt details
+  let handoffHtml = '';
+  if (h) {
+    const fromAgent = state.agents.find((a) => a.id === h.from) || { id: h.from, name: h.from };
+    const toAgent = state.agents.find((a) => a.id === h.to) || { id: h.to, name: h.to };
+    const isReturned = h.status === 'returned';
+    const isPending = h.status === 'pending';
+    const badgeColor = isReturned
+      ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+      : isPending
+        ? 'border-amber-500/40 bg-amber-500/15 text-amber-200'
+        : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
+
+    const safeEvidence = isValidSafeUrl(h.evidence_url) ? h.evidence_url : null;
+
+    handoffHtml = `
+      <div class="rounded-2xl border ${isReturned ? 'border-rose-500/40 bg-rose-950/20' : isPending ? 'border-amber-500/30 bg-amber-950/15' : 'border-emerald-500/30 bg-emerald-950/15'} p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-white">${isAr() ? 'إيصال التسليم الموثق (Handoff Receipt)' : 'Verified Handoff Receipt'}</span>
+            <span class="rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${badgeColor}">
+              ${h.status.toUpperCase()}
+            </span>
+          </div>
+          <span class="font-mono text-[10px] text-slate-400">${escapeHtml(h.at || '')}</span>
+        </div>
+
+        <div class="grid sm:grid-cols-2 gap-2 text-xs">
+          <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-2.5">
+            <span class="text-slate-400 text-[10px]">${isAr() ? 'المرسل (From):' : 'From:'}</span>
+            <strong class="block text-slate-200 font-semibold mt-0.5">${escapeHtml(fromAgent.name)}</strong>
+          </div>
+          <div class="rounded-xl bg-surface-950/80 border border-slate-800 p-2.5">
+            <span class="text-slate-400 text-[10px]">${isAr() ? 'المستلم (To):' : 'To:'}</span>
+            <strong class="block text-slate-200 font-semibold mt-0.5">${escapeHtml(toAgent.name)}</strong>
+          </div>
+        </div>
+
+        <div class="space-y-1.5 text-xs">
+          <div class="text-slate-300"><strong class="text-white">${isAr() ? 'ملخص الإنجاز:' : 'Summary:'}</strong> ${escapeHtml(h.summary)}</div>
+          <div class="rounded-xl bg-surface-950 border border-slate-800 p-3 text-emerald-200">
+            <strong class="text-emerald-400">${isAr() ? 'الخطوة التالية المطلوبة:' : 'Next Step Required:'}</strong> ${escapeHtml(h.next_step)}
+          </div>
+        </div>
+
+        ${h.decision ? `
+          <div class="rounded-xl border border-slate-700 bg-surface-950 p-3 space-y-1 text-xs">
+            <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+              <span>Decision by: <strong class="text-slate-200">${escapeHtml(h.decision.by || '—')}</strong></span>
+              <span>${escapeHtml(h.decision.at || '—')}</span>
+            </div>
+            ${h.decision.reason ? `<div class="text-rose-200 mt-1"><strong>${isAr() ? 'سبب الإعادة / القرار:' : 'Reason:'}</strong> ${escapeHtml(h.decision.reason)}</div>` : ''}
+          </div>
+        ` : ''}
+
+        ${safeEvidence ? `
+          <div class="pt-2 border-t border-slate-800/80">
+            <a href="${escapeHtml(safeEvidence)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">
+              <span>↗ ${isAr() ? 'عرض الدليل والمخرجات المرتبطة' : 'Inspect Evidence Artifact'}</span>
+              <span class="font-mono text-[10px] opacity-75">(${escapeHtml(safeEvidence)})</span>
+            </a>
+            <p class="text-[10px] text-slate-400 mt-1.5 italic">
+              ℹ ${isAr() ? 'فتح الرابط للمشاهدة والتحقق فقط — لا يؤدي تلقائياً إلى قبول التسليم. يتم تحديث الحالة عبر تعديل ملف agents-state.json في المستودع.' : 'Note: Reviewing evidence does not automatically accept the handoff. Updates must be committed to agents-state.json.'}
+            </p>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  // 4. Chronological Available Sequence (Requirement 4)
+  const timelineEvents = [];
+
+  // Initial task creation / update
+  timelineEvents.push({
+    at: task.updatedAt || '2026-11-19T21:00:00Z',
+    type: 'task',
+    icon: '📝',
+    title: isAr() ? `تحديث المهمة: ${task.id}` : `Task updated: ${task.id}`,
+    actor: ownerAgent.name,
+    desc: isAr() ? (task.summaryAr || task.summaryEn) : (task.summaryEn || task.summaryAr)
+  });
+
+  // Matching messages
+  state.liveMessages.forEach((m) => {
+    if (m.taskId === task.id || m.task === task.id) {
+      timelineEvents.push({
+        at: m.timestamp || '2026-11-19T21:00:00Z',
+        type: 'message',
+        icon: '💬',
+        title: isAr() ? `رسالة تنسيق (${m.from} ← ${m.to})` : `Coordination Message (${m.from} → ${m.to})`,
+        actor: m.from,
+        desc: m.text
+      });
+    }
+  });
+
+  // Handoff submission
+  if (h && h.at) {
+    timelineEvents.push({
+      at: h.at,
+      type: 'handoff',
+      icon: '🤝',
+      title: isAr() ? `إرسال إيصال تسليم (${h.status})` : `Handoff Submitted (${h.status})`,
+      actor: h.from,
+      desc: h.summary + (h.next_step ? ` — مطلوب: ${h.next_step}` : '')
+    });
+  }
+
+  // Handoff decision
+  if (h && h.decision && h.decision.at) {
+    timelineEvents.push({
+      at: h.decision.at,
+      type: 'decision',
+      icon: h.status === 'returned' ? '↩' : '✓',
+      title: isAr() ? `قرار التسليم: ${h.status}` : `Handoff Decision: ${h.status}`,
+      actor: h.decision.by || 'reviewer',
+      desc: h.decision.reason ? (isAr() ? `السبب: ${h.decision.reason}` : `Reason: ${h.decision.reason}`) : (isAr() ? 'تم الاعتماد' : 'Accepted')
+    });
+  }
+
+  // Sort chronologically by date
+  timelineEvents.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+  const sequenceHtml = `
+    <div class="space-y-2">
+      <div class="flex items-center justify-between">
+        <h4 class="text-xs font-bold text-white">${isAr() ? 'التسلسل المتاح (Available Sequence)' : 'Available Sequence'}</h4>
+        <span class="font-mono text-[10px] text-slate-500">${timelineEvents.length} ${isAr() ? 'حدث متاح' : 'events'}</span>
+      </div>
+      <p class="text-[11px] text-slate-400 mb-2 leading-relaxed">
+        ${isAr()
+          ? 'يعرض هذا القسم الأحداث المرتبطة المتوفرة في ملف الحالة الحالي agents-state.json (وليس سجلاً تدقيقياً خارجياً شاملاً).'
+          : 'Displays available associated events from the current agents-state.json (not an exhaustive external audit log).'}
+      </p>
+
+      <div class="space-y-2 max-h-56 overflow-y-auto custom-scroll pe-1">
+        ${timelineEvents.map((ev) => `
+          <div class="rounded-xl bg-surface-950 border border-slate-800 p-3 text-xs space-y-1">
+            <div class="flex items-center justify-between text-[11px]">
+              <span class="font-semibold text-slate-200 flex items-center gap-1.5">
+                <span>${ev.icon}</span>
+                <span>${escapeHtml(ev.title)}</span>
+              </span>
+              <span class="font-mono text-[10px] text-slate-400">${escapeHtml(ev.at)}</span>
+            </div>
+            <p class="text-slate-400 text-[11px] leading-relaxed">${escapeHtml(ev.desc)}</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  openModal(
+    `${task.id} — ${isAr() ? (task.titleAr || task.title) : (task.titleEn || task.title)}`,
+    `
+      <div class="space-y-4 text-xs">
+        ${cacheBanner}
+        ${disambiguationBoxes}
+        ${handoffHtml}
+        ${sequenceHtml}
+      </div>
+    `
+  );
+}
+
+// =========================================================================
 // 5. ZERO-DEPENDENCY NATIVE SVG BREAK-EVEN CHART (Instant Render)
 // =========================================================================
 function renderSvgBreakEven(containerEl) {
@@ -830,6 +1395,8 @@ function renderOverview() {
   const workingCount = state.agents.filter((a) => a.status === 'working' || a.status === 'idle').length;
 
   return `
+    ${renderCoordinationTower()}
+
     <section class="relative overflow-hidden rounded-3xl glass-card p-6 sm:p-10 contain-opt">
       <div class="pointer-events-none absolute -top-24 -end-24 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl"></div>
       <div class="pointer-events-none absolute -bottom-24 -start-24 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl"></div>
@@ -1043,10 +1610,12 @@ function renderBoard() {
 function renderTasks() {
   const { tasks } = filterItems();
   return `
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    ${renderCoordinationTower()}
+
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-6">
       <div>
         <h1 class="text-2xl font-bold text-white">${isAr() ? 'قائمة المهام والأدلة الموثّقة' : 'Shared Tasks & Artifacts'}</h1>
-        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'لا تسليم بلا دليل: استعرض حزم الاختبارات أو PRs المرتبطة.' : 'No handoff without proof: inspect verified test bundles & PRs.'}</p>
+        <p class="text-xs text-slate-400 mt-1">${isAr() ? 'لا تسليم بلا دليل: استعرض حزم الاختبارات أو PRs المرتبطة والتسلسل المتاح.' : 'No handoff without proof: inspect verified test bundles & available sequence.'}</p>
       </div>
       <button id="addTaskBtn" type="button" class="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
         ${isAr() ? '+ إضافة مهمة' : '+ New Task'}
@@ -1063,6 +1632,18 @@ function renderTasks() {
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="rounded-md bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 font-mono text-xs font-bold text-cyan-300">${escapeHtml(task.id)}</span>
                   <h3 class="text-base font-bold text-white">${escapeHtml(isAr() ? task.titleAr : task.titleEn)}</h3>
+                  ${task.handoff ? `
+                    <span class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${
+                      task.handoff.status === 'returned'
+                        ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                        : task.handoff.status === 'pending'
+                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                    }">
+                      <span>${task.handoff.status === 'returned' ? '🔴' : task.handoff.status === 'pending' ? '🟡' : '🟢'}</span>
+                      <span>${isAr() ? (task.handoff.status === 'returned' ? 'إيصال معاد' : task.handoff.status === 'pending' ? 'إيصال معلق' : 'إيصال مقبول') : ('Receipt: ' + task.handoff.status)}</span>
+                    </span>
+                  ` : ''}
                 </div>
                 <p class="text-xs text-slate-300 mt-2 leading-relaxed">${escapeHtml(isAr() ? task.summaryAr : task.summaryEn)}</p>
               </div>
@@ -1077,6 +1658,9 @@ function renderTasks() {
                 <span class="font-mono text-[11px]">${escapeHtml(task.updatedAt)}</span>
               </div>
               <div class="flex flex-wrap gap-2">
+                <button type="button" data-open-task-details="${escapeHtml(task.id)}" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-surface-950 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:border-emerald-400/60 hover:text-white transition">
+                  <span>📋 ${isAr() ? 'التفاصيل والتسلسل المتاح' : 'Details & Sequence'}</span>
+                </button>
                 ${task.artifacts.length ? task.artifacts.map((art, idx) => `
                   <button type="button" data-inspect-task="${escapeHtml(task.id)}" data-inspect-idx="${idx}" class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 transition">
                     <span>📎 ${escapeHtml(art.label)}</span>
@@ -1671,6 +2255,14 @@ function bindViewEvents() {
           <pre dir="ltr" class="rounded-xl bg-surface-950 border border-slate-800 p-4 text-[11px] text-emerald-200 overflow-x-auto custom-scroll whitespace-pre-wrap leading-relaxed">${escapeHtml(art.details)}</pre>
         </div>
       `);
+    });
+  });
+
+  // Open Task Details & Epistemic Honesty Sequence Modal
+  document.querySelectorAll('[data-open-task-details]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tid = btn.getAttribute('data-open-task-details');
+      openTaskDetailsModal(tid);
     });
   });
 

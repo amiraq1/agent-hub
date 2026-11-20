@@ -21,3 +21,6 @@ jobs:
 
       - name: Validate agents-state.json
         run: node scripts/validate-state.js
+
+      - name: Test Coordination Tower & Handoff Suite
+        run: node scripts/test-tower.js

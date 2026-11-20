@@ -46,7 +46,16 @@
       "status": "waiting_review",
       "link": "https://github.com/amiraq1/amnabd-deals-web/pull/96",
       "created_by": "site-agent",
-      "updated_at": "2026-11-19T23:05:00+03:00"
+      "updated_at": "2026-11-19T23:05:00+03:00",
+      "handoff": {
+        "from": "site-agent",
+        "to": "muse",
+        "at": "2026-11-19T23:05:00+03:00",
+        "status": "pending",
+        "summary": "اكتمال المرحلة الاحترافية لتحسين السرعة والأداء الشامل لموقع amnabd.com بنجاح (633 اختبار، bundle budget 122.94KB)",
+        "next_step": "مراجعة واعتماد PR #96 ودمجه إلى main",
+        "evidence_url": "https://github.com/amiraq1/amnabd-deals-web/pull/96"
+      }
     }
   ],
   "messages": [
