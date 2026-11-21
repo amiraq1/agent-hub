@@ -13,6 +13,7 @@
 import { sanitizeUrl, isValidSafeUrl, escapeHtml, safeLinkHref } from './modules/security.js';
 import { getCoordinationTowerItems } from './modules/tower.js';
 import { formatWaitingDuration, nowTime, minutesSinceIso } from './modules/format.js';
+import { getFocusableElements, trapFocusInModal } from './modules/a11y.js';
 
 // =========================================================================
 // 1. I18N DICTIONARY (Arabic RTL default + English LTR)
@@ -1480,38 +1481,6 @@ function renderHandoffs() {
 // 6. MODALS & DRAWERS (Accessible Dialogs with Focus Trap & Restoration)
 // =========================================================================
 let lastFocusedElement = null;
-
-function getFocusableElements(container) {
-  if (!container) return [];
-  return Array.from(
-    container.querySelectorAll(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-  ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-}
-
-function trapFocusInModal(e, modalContainer) {
-  if (e.key !== 'Tab') return;
-  const focusables = getFocusableElements(modalContainer);
-  if (!focusables.length) {
-    e.preventDefault();
-    return;
-  }
-  const firstEl = focusables[0];
-  const lastEl = focusables[focusables.length - 1];
-
-  if (e.shiftKey) {
-    if (document.activeElement === firstEl || !modalContainer.contains(document.activeElement)) {
-      e.preventDefault();
-      lastEl.focus();
-    }
-  } else {
-    if (document.activeElement === lastEl) {
-      e.preventDefault();
-      firstEl.focus();
-    }
-  }
-}
 
 function openModal(title, htmlBody, triggerEl = null) {
   lastFocusedElement = triggerEl || document.activeElement;

@@ -10,8 +10,6 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    env:
-      NODE_OPTIONS: '--experimental-require-module'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,3 +27,6 @@ jobs:
 
       - name: Run Security & Negative Validation Tests
         run: node scripts/test-validation.js
+
+      - name: Run Accessibility & Modal Focus Trap Tests
+        run: node scripts/test-a11y.js

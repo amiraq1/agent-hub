@@ -12,7 +12,8 @@ const STATIC_ASSETS = [
   './assets/manifest.webmanifest',
   './assets/modules/security.js',
   './assets/modules/tower.js',
-  './assets/modules/format.js'
+  './assets/modules/format.js',
+  './assets/modules/a11y.js'
 ];
 
 self.addEventListener('install', (event) => {
