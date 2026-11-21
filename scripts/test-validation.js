@@ -208,6 +208,42 @@ describe('Security & Validation: Positive & Negative Tests', () => {
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.includes('status "invalid_status_xyz" is invalid')));
   });
+
+  test('POS-03: Accepts valid positive integer revision (e.g. revision: 42)', () => {
+    const state = createValidBaseState();
+    state.revision = 42;
+    const result = validateStateObject(state);
+    assert.equal(result.valid, true);
+    assert.equal(result.errors.length, 0);
+  });
+
+  test('NEG-13: Rejects invalid non-positive revision (0 or negative integer)', () => {
+    const state0 = createValidBaseState();
+    state0.revision = 0;
+    const result0 = validateStateObject(state0);
+    assert.equal(result0.valid, false);
+    assert.ok(result0.errors.some((e) => e.includes('Root "revision" must be a positive integer >= 1')));
+
+    const stateNeg = createValidBaseState();
+    stateNeg.revision = -5;
+    const resultNeg = validateStateObject(stateNeg);
+    assert.equal(resultNeg.valid, false);
+    assert.ok(resultNeg.errors.some((e) => e.includes('Root "revision" must be a positive integer >= 1')));
+  });
+
+  test('NEG-14: Rejects non-integer or string revision (e.g. 1.5, "1")', () => {
+    const stateFloat = createValidBaseState();
+    stateFloat.revision = 1.5;
+    const resultFloat = validateStateObject(stateFloat);
+    assert.equal(resultFloat.valid, false);
+    assert.ok(resultFloat.errors.some((e) => e.includes('Root "revision" must be a positive integer >= 1')));
+
+    const stateStr = createValidBaseState();
+    stateStr.revision = '1';
+    const resultStr = validateStateObject(stateStr);
+    assert.equal(resultStr.valid, false);
+    assert.ok(resultStr.errors.some((e) => e.includes('Root "revision" must be a positive integer >= 1')));
+  });
 });
 
-console.log('✓ All 14 security and validation test suites passed successfully!');
+console.log('✓ All security and validation test suites passed successfully!');
