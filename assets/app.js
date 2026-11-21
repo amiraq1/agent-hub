@@ -778,7 +778,7 @@ function renderCoordinationTower() {
   `;
 }
 
-function openTaskDetailsModal(taskId) {
+function openTaskDetailsModal(taskId, triggerEl = null) {
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task) return;
 
@@ -812,7 +812,7 @@ function openTaskDetailsModal(taskId) {
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
         <div class="rounded-xl bg-surface-950 border border-slate-800 p-3">
           <div class="text-slate-400 text-[10px]">${isAr() ? 'عمر انتظار التسليم' : 'Handoff Waiting Age'}</div>
-          <div class="font-mono font-bold mt-1 ${h ? (h.status === 'returned' ? 'text-rose-400' : 'text-amber-300') : 'text-slate-500'}">
+          <div class="font-mono font-bold mt-1 ${h ? (h.status === 'returned' ? 'text-rose-400' : 'text-amber-300') : 'text-slate-400'}">
             ${h ? formatWaitingDuration(handoffWaitMins, isAr()) : (isAr() ? 'لا يوجد تسليم معلق' : 'No pending handoff')}
           </div>
           <div class="text-[10px] text-slate-400 truncate mt-0.5">${h ? (h.at || '—') : '—'}</div>
@@ -996,7 +996,7 @@ function openTaskDetailsModal(taskId) {
         </a>
       </div>
     </div>
-  `);
+  `, triggerEl);
 }
 
 function filterItems() {
@@ -1477,9 +1477,44 @@ function renderHandoffs() {
 }
 
 // =========================================================================
-// 6. MODALS & DRAWERS
+// 6. MODALS & DRAWERS (Accessible Dialogs with Focus Trap & Restoration)
 // =========================================================================
-function openModal(title, htmlBody) {
+let lastFocusedElement = null;
+
+function getFocusableElements(container) {
+  if (!container) return [];
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+}
+
+function trapFocusInModal(e, modalContainer) {
+  if (e.key !== 'Tab') return;
+  const focusables = getFocusableElements(modalContainer);
+  if (!focusables.length) {
+    e.preventDefault();
+    return;
+  }
+  const firstEl = focusables[0];
+  const lastEl = focusables[focusables.length - 1];
+
+  if (e.shiftKey) {
+    if (document.activeElement === firstEl || !modalContainer.contains(document.activeElement)) {
+      e.preventDefault();
+      lastEl.focus();
+    }
+  } else {
+    if (document.activeElement === lastEl) {
+      e.preventDefault();
+      firstEl.focus();
+    }
+  }
+}
+
+function openModal(title, htmlBody, triggerEl = null) {
+  lastFocusedElement = triggerEl || document.activeElement;
   const tEl = document.getElementById('appModalTitle');
   const bEl = document.getElementById('appModalBody');
   const modal = document.getElementById('appModal');
@@ -1490,6 +1525,11 @@ function openModal(title, htmlBody) {
   modal.setAttribute('aria-modal', 'true');
   modal.classList.remove('hidden');
   modal.classList.add('flex');
+
+  setTimeout(() => {
+    const closeBtn = document.getElementById('closeAppModalBtn');
+    if (closeBtn) closeBtn.focus();
+  }, 20);
 }
 
 function closeModal() {
@@ -1497,9 +1537,14 @@ function closeModal() {
   if (!modal) return;
   modal.classList.add('hidden');
   modal.classList.remove('flex');
+  if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+    try { lastFocusedElement.focus(); } catch (e) {}
+    lastFocusedElement = null;
+  }
 }
 
-function openAlertsDrawer() {
+function openAlertsDrawer(triggerEl = null) {
+  lastFocusedElement = triggerEl || document.activeElement;
   const alerts = getActiveAlerts();
   const body = document.getElementById('alertsContent');
   const modal = document.getElementById('alertsModal');
@@ -1536,11 +1581,26 @@ function openAlertsDrawer() {
   body.querySelectorAll('[data-alert-jump]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.view = btn.getAttribute('data-alert-jump');
-      modal.classList.add('hidden');
+      closeAlertsDrawer();
       renderApp();
     });
   });
   modal.classList.remove('hidden');
+
+  setTimeout(() => {
+    const closeBtn = document.getElementById('closeAlertsBtn');
+    if (closeBtn) closeBtn.focus();
+  }, 20);
+}
+
+function closeAlertsDrawer() {
+  const modal = document.getElementById('alertsModal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+    try { lastFocusedElement.focus(); } catch (e) {}
+    lastFocusedElement = null;
+  }
 }
 
 // =========================================================================
@@ -1647,14 +1707,14 @@ function bindViewEvents() {
   });
 
   document.querySelectorAll('[data-open-task-details]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       const id = btn.getAttribute('data-open-task-details');
-      openTaskDetailsModal(id);
+      openTaskDetailsModal(id, e.currentTarget);
     });
   });
 
   document.querySelectorAll('[data-inspect-task]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       const taskId = btn.getAttribute('data-inspect-task');
       const idx = parseInt(btn.getAttribute('data-inspect-idx'), 10);
       const task = state.tasks.find((t) => t.id === taskId);
@@ -1680,7 +1740,7 @@ function bindViewEvents() {
           ${safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 transition">↗ ${isAr() ? 'فتح الرابط على GitHub' : 'Open on GitHub'}</a>` : `<span class="text-xs text-slate-400 font-mono italic">${isAr() ? 'رابط غير متاح أو غير آمن' : 'No safe link'}</span>`}
           <pre dir="ltr" class="rounded-xl bg-surface-950 border border-slate-800 p-4 text-[11px] text-emerald-200 overflow-x-auto custom-scroll whitespace-pre-wrap leading-relaxed">${escapeHtml(art.details)}</pre>
         </div>
-      `);
+      `, e.currentTarget);
     });
   });
 }
@@ -1712,13 +1772,9 @@ function initGlobalListeners() {
     document.getElementById('mobileNav')?.classList.toggle('hidden');
   });
 
-  document.getElementById('alertsBtn')?.addEventListener('click', openAlertsDrawer);
-  document.getElementById('closeAlertsBtn')?.addEventListener('click', () => {
-    document.getElementById('alertsModal')?.classList.add('hidden');
-  });
-  document.getElementById('alertsBackdrop')?.addEventListener('click', () => {
-    document.getElementById('alertsModal')?.classList.add('hidden');
-  });
+  document.getElementById('alertsBtn')?.addEventListener('click', (e) => openAlertsDrawer(e.currentTarget));
+  document.getElementById('closeAlertsBtn')?.addEventListener('click', closeAlertsDrawer);
+  document.getElementById('alertsBackdrop')?.addEventListener('click', closeAlertsDrawer);
 
   document.getElementById('closeAppModalBtn')?.addEventListener('click', closeModal);
   document.getElementById('appModalBackdrop')?.addEventListener('click', closeModal);
@@ -1752,14 +1808,45 @@ function initGlobalListeners() {
   bindSearch('globalSearchInput');
   bindSearch('mobileSearchInput');
 
-  // Keyboard Navigation: [ / ] search, [ R ] sync, [ 1-4 ] views, [ Esc ] close
+  // Keyboard Navigation: [ / ] search, [ R ] sync, [ 1-4 ] views, [ Esc ] close, [ Tab ] focus trap
   window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-      if (e.key === 'Escape') {
-        e.target.blur();
-        closeModal();
-        document.getElementById('alertsModal')?.classList.add('hidden');
+    const appModal = document.getElementById('appModal');
+    const alertsModal = document.getElementById('alertsModal');
+    const isAppModalOpen = appModal && !appModal.classList.contains('hidden');
+    const isAlertsModalOpen = alertsModal && !alertsModal.classList.contains('hidden');
+
+    if (e.key === 'Tab') {
+      if (isAppModalOpen) {
+        trapFocusInModal(e, appModal);
+        return;
       }
+      if (isAlertsModalOpen) {
+        trapFocusInModal(e, alertsModal);
+        return;
+      }
+    }
+
+    if (e.key === 'Escape') {
+      if (isAppModalOpen) {
+        e.preventDefault();
+        closeModal();
+        return;
+      }
+      if (isAlertsModalOpen) {
+        e.preventDefault();
+        closeAlertsDrawer();
+        return;
+      }
+      const s = document.getElementById('globalSearchInput');
+      if (s && s.value) {
+        s.value = '';
+        state.searchQuery = '';
+        renderApp();
+      }
+      return;
+    }
+
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
       return;
     }
 
@@ -1778,15 +1865,6 @@ function initGlobalListeners() {
       const targetView = views[parseInt(e.key, 10) - 1];
       if (targetView && state.view !== targetView) {
         state.view = targetView;
-        renderApp();
-      }
-    } else if (e.key === 'Escape') {
-      closeModal();
-      document.getElementById('alertsModal')?.classList.add('hidden');
-      const s = document.getElementById('globalSearchInput');
-      if (s && s.value) {
-        s.value = '';
-        state.searchQuery = '';
         renderApp();
       }
     }
